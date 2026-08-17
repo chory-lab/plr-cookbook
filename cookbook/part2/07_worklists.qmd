@@ -192,8 +192,8 @@ print("ready for aspirate:", len(resources), "resources,", len(volumes), "volume
 `zip` stops at the shortest argument, so a worklist with a missing volume silently produces fewer
 operations. `zip(..., strict=True)` raises instead.
 
-**See also:** [chapter 5](../part1/05_indexing.qmd#streaming) covers `itertools` and `deque` on well
-selections.
+**See also:** [chapter 5](../part1/05_indexing.qmd#streaming) covers the `itertools` streaming
+patterns on well selections.
 
 :::
 

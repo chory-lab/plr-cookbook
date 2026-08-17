@@ -416,10 +416,15 @@
   chapter: 15
   apis: "Deck, ResourceHolder, assign_child_at_slot, OTDeck, STARLetDeck, get_slot, Coordinate"
 
-- title: "Stream and window a selection"
+- title: "Stream, pair, and batch a plan"
   path: part1/05_indexing.qmd#streaming
   chapter: 5
-  apis: "itertools.cycle, itertools.islice, itertools.groupby, collections.deque, maxlen"
+  apis: "itertools.cycle, itertools.islice, itertools.product, itertools.groupby, traverse, get_identifier, get_item, row, column, get_all_items, set"
+
+- title: "Convert a linear index to a grid position"
+  path: part1/05_indexing.qmd#index-arithmetic
+  chapter: 5
+  apis: "divmod, num_items_y, get_item, column-major, Coordinate, get_absolute_location"
 
 - title: "Pair a worklist with channels"
   path: part2/07_worklists.qmd#pairing

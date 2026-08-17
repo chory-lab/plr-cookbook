@@ -10,7 +10,6 @@ title: "Indexing"
 from pylabrobot.liquid_handling import LiquidHandler
 from pylabrobot.liquid_handling.backends import LiquidHandlerChatterboxBackend
 import itertools
-from collections import deque
 
 from pylabrobot.resources import STARLetDeck, PLT_CAR_L5AC_A00, cor_96_wellplate_360uL_Fb
 
@@ -40,7 +39,7 @@ Choose a set of wells in one expression. The grammar:
 
 | Expression | Selects | Result |
 |---|---|---|
-| `plate["A1:H1"]` | wells from A1 to H1 along the plate's fill order | 8 wells (row A) |
+| `plate["A1:H1"]` | the rectangle spanned by A1 and H1 — here column 1 | 8 wells (column 1) |
 | `plate["A1", "B2"]` | exactly the listed wells | 2 wells |
 | `plate[0]` | the well at index 0 | 1 well (always a list) |
 | `plate[range(5)]` | wells at indices 0–4 | 5 wells |
@@ -49,13 +48,14 @@ Choose a set of wells in one expression. The grammar:
 
 ```{python}
 #| label: cell-select
-print("A1:H1 ->", [w.name for w in plate["A1:H1"]][:3], "... (8 total)")   # <1>
-print("A1,B2 ->", [w.name for w in plate["A1", "B2"]])                     # <2>
-print("0     ->", [w.name for w in plate[0]])
-print("(0,0) ->", plate.get_item((0, 0)).name)      # row A, column 1
+print("A1:H1 ->", [w.get_identifier() for w in plate["A1:H1"]][:3], "... (8 total)")   # <1>
+print("A1,B2 ->", [w.get_identifier() for w in plate["A1", "B2"]])                     # <2>
+print("0     ->", [w.get_identifier() for w in plate[0]])
+print("(0,0) ->", plate.get_item((0, 0)).get_identifier())      # row A, column 1
 ```
 
-1. A colon is a *range*: every well from the first identifier to the second, in fill order.
+1. A colon is a *rectangular span*: every well in the rectangle whose corners are the two
+   identifiers. `"A1:H1"` is column 1; `"A1:A12"` would be row A.
 2. A comma-separated list is an explicit set. Note the outer brackets — `plate["A1", "B2"]`.
 
 ::: {.callout-warning title="Gotcha: `plate[(0, 0)]` is *not* row, column"}
@@ -80,9 +80,9 @@ Get one full row or column, or pull wells by index.
 
 ```{python}
 #| label: cell-rows-cols
-print("row(0)   ->", len(plate.row(0)), "wells:", [w.name.split('well_')[1] for w in plate.row(0)][:3], "...")
+print("row(0)   ->", len(plate.row(0)), "wells:", [w.get_identifier() for w in plate.row(0)][:3], "...")
 print("row('A') ->", len(plate.row("A")), "wells")   # row() accepts the label too
-print("column(0)->", len(plate.column(0)), "wells:", [w.name.split('well_')[1] for w in plate.column(0)])
+print("column(0)->", len(plate.column(0)), "wells:", [w.get_identifier() for w in plate.column(0)])
 ```
 
 **Which to reach for.**
@@ -98,6 +98,42 @@ the comma syntax above.
 
 ---
 
+## Convert between a linear index and a grid position {#index-arithmetic}
+
+::: {.recipe}
+
+`plate[0]` uses a **linear** index; `plate.get_item((row, col))` uses a **grid** position. The
+plate fills **column-major** — down the first column, then the next — so the divisor is the row
+count, not the column count:
+
+```{python}
+#| label: cell-index-arithmetic
+i = 12                                                           # <1>
+col, row = divmod(i, plate.num_items_y)                          # <2>
+print(i, "->", plate.get_item((row, col)).get_identifier())      # E2
+
+back = col * plate.num_items_y + row                             # <3>
+print("round-trip:", back)
+```
+
+1. The thirteenth well in fill order — down column 1 (A1..H1), then A2, B2, ...
+2. `divmod(i, num_items_y)` unpacks into (column, row): `row = i % 8`, `col = i // 8`. The modulo
+   is the number of **rows**, which is the periodicity of the layout — get the divisor wrong and
+   the 13th well comes back as B2 instead of E2.
+3. The forward form is `i = col * num_items_y + row`. Same `%` periodicity that makes the rotation
+   in the [streaming recipe](#streaming) work.
+
+Modulo also shows up as **parity** in the 96→384 [quadrant](#quadrant) mapping: a 96-well plate's
+well `(r, c)` lands at `(2r, 2c)` in its 384 checkerboard quadrant.
+
+**See also:** `Coordinate` supports `+` and `-`, so `well.get_absolute_location() +
+Coordinate(x=1, y=0, z=1.5)` is the operator form of the `offsets` in
+[chapter 4](../part1/04_pipetting.qmd#offsets).
+
+:::
+
+---
+
 ## Walk a plate in batches {#traverse}
 
 ::: {.recipe}
@@ -106,34 +142,21 @@ Hand eight-channel operations a stream of columns, one batch at a time.
 
 ```{python}
 #| label: cell-traverse
-for batch in plate.traverse(batch_size=8, start="top_left", direction="right"):
-    first, last = batch[0].name.split("well_")[1], batch[-1].name.split("well_")[1]
-    print(f"batch of {len(batch)}: {first} .. {last}")
-    if len(batch) == 8:
-        break                                        # <1>
+for batch in itertools.islice(
+    plate.traverse(batch_size=8, start="top_left", direction="right"), 3   # <1>
+):
+    print(len(batch), "wells:", batch[0].get_identifier(), "..", batch[-1].get_identifier())
+    # the real body would be:  await lh.aspirate(batch, vols=[25] * 8)     # <2>
 ```
 
-1. `traverse` is a generator: batches are produced lazily and only when you ask. Iterating the
-   whole plate would print all twelve batches.
+1. `traverse` is a lazy generator, so `islice` bounds the demo to the first three of twelve passes —
+   without it this cell prints all twelve.
+2. Each batch is exactly what one 8-channel pass can reach, so the pipetting call slots in here.
 
 **Gotcha: the signature is `traverse(batch_size, start, direction)`.**
 
 Older docs show `traverse(direction, batch_size)`. In 0.2.2 `batch_size` comes first and **`start`
 is required** — omit it and you get `TypeError: missing 1 required positional argument: 'start'`.
-
-::: {.column-margin}
-**Streaming without a loop**
-
-`repeat=True` turns the generator into an endless cycle — pair it with `itertools.islice` for a
-clean "first 20 wells" without writing a counter.
-:::
-
-```{python}
-#| eval: false
-import itertools
-first_five = list(itertools.islice(
-    plate.traverse(1, "top_left", "right", repeat=True), 5))
-```
 
 **See also:** the batching helpers in [chapter 7](../part2/07_worklists.qmd) chunk worklists
 across channels the same way.
@@ -142,40 +165,123 @@ across channels the same way.
 
 ---
 
-## Stream and window a selection {#streaming}
+## Stream, pair, and batch a plan {#streaming}
 
 ::: {.recipe}
 
-Take a finite slice of an endless well sequence, and keep a fixed-size window of what has been
-used.
+A few `itertools` idioms replace hand-rolled loop bookkeeping in everyday plans: rotate sources
+evenly, pull the next chunk of an unbounded worklist, build a dose-response block with
+replicates, skip border wells, and batch a plan by the tip that fits.
+
+### Rotate sources evenly
+
+Four source wells serving eight destinations: give each destination the next source in turn, so
+all four deplete evenly instead of draining A1 first.
 
 ```{python}
-#| label: cell-streaming
-wells = itertools.cycle(plate["A1:H1"])                  # <1>
-first_ten = list(itertools.islice(wells, 10))            # <2>
-print("ten from a cycle of eight:", [w.name.split("_")[-1] for w in first_ten])
+#| label: cell-streaming-rotate
+sources = plate["A1:D1"]                # four source wells
+targets = plate["A2:H2"]                # eight destinations
 
-recent = deque(maxlen=3)                                 # <3>
-for well in plate["A1:H1"]:
-    recent.append(well.name.split("_")[-1])
-print("last three used:", list(recent))
+for target, source in zip(targets, itertools.cycle(sources)):
+    print(f"{target.get_identifier()} <- {source.get_identifier()}")
 ```
 
-1. `cycle` repeats the selection forever without building a list.
-2. `islice` takes a finite prefix from it. Together they give "the next n wells, wrapping".
-3. `deque(maxlen=n)` drops from the left as it fills, so the window needs no bookkeeping.
+`cycle` repeats the sources forever; `zip` stops at the last target. The rotation a hand loop
+would carry as `i % len(sources)` is implicit.
 
-Grouping a plan by volume, so equal volumes batch together:
+### Pull the next chunk of an unbounded worklist
+
+A worklist built from `traverse(..., repeat=True)` never ends. An 8-channel head consumes it in
+chunks, resuming exactly where it left off:
 
 ```{python}
-#| label: cell-grouping
-plan = [("A1", 25), ("B1", 25), ("C1", 50), ("D1", 50)]
+#| label: cell-streaming-chunk
+worklist = (
+    f"{batch[0].get_identifier()} <- 25 uL"
+    for batch in plate.traverse(1, "top_left", "right", repeat=True)
+)
 
-for volume, group in itertools.groupby(plan, key=lambda row: row[1]):   # <1>
-    print(f"{volume} uL:", [well for well, _ in group])
+for _ in range(3):                      # three passes of an 8-channel head
+    chunk = list(itertools.islice(worklist, 8))
+    print("next 8:", chunk)
 ```
 
-1. `groupby` batches **consecutive** equal keys, so the input has to be sorted by that key first.
+`traverse` yields batches even at `batch_size=1` (hence `batch[0]`), and `islice` pulls exactly the
+next eight rows per pass — the stream's cursor survives across pulls, so nothing counts or indexes
+by hand.
+
+### Dose a plate in replicates
+
+A dose-response block: four concentrations, three replicates each. `product` builds every
+(dose, replicate) pairing; the block is a deliberately *partial* plate — 12 of 96 wells, the rest
+stay empty.
+
+```{python}
+#| label: cell-streaming-matrix
+doses = plate["E1:H1"]                  # four concentrations, down column 1
+replicates = range(3)                   # three replicates per dose
+
+plan = list(itertools.product(doses, replicates))          # <1>
+print(len(plan), "wells =", len(doses), "doses x", len(replicates), "replicates")
+
+for i, (dose, rep) in enumerate(plan):
+    well = plate.get_item((0, i))       # dose 1 -> A1:A3, dose 2 -> A4:A6, ...
+    print(f"{well.get_identifier()} <- {dose.get_identifier()}  rep {rep + 1}")
+```
+
+1. `product` is the Cartesian product — the same as `for dose in doses: for rep in
+   replicates:`. The iterator is single-use, so `list()` materializes it; keep it an iterator and
+   `islice` over it if the plan is large.
+
+Assay plates usually leave the border ring empty to avoid edge effects. For the common rectangle,
+the `#select` grammar does it directly:
+
+```{python}
+#| label: cell-streaming-border
+interior = plate["B2:G11"]                 # <1>
+print(len(interior), "of", len(plate.get_all_items()), "wells are usable")
+```
+
+1. `"B2:G11"` is the rectangular span between the two corners — rows B–G, columns 2–11 — so the
+   border ring (row A, row H, col 1, col 12) is excluded by construction.
+
+When the drop is not a clean rectangle, subtract a set instead:
+
+```{python}
+#| label: cell-streaming-border-set
+border = set(plate.row("A") + plate.row("H") + plate.column(0) + plate.column(11))   # <1>
+keep = [w for w in plate.get_all_items() if w not in border]                          # <2>
+print(len(keep), "wells, plate order preserved")
+```
+
+1. The ring as a set — the four edge lines. `row()` and `column()` are the line views from
+   [above](#rows-cols); a set makes the `in` test constant-time.
+2. "Plate minus border": every well not in the ring, still in plate order — the subset you act
+   on. Both forms give the same 60 wells; the grammar is the shorter spelling, set subtraction
+   the general one.
+
+### Batch a plan by the tip that fits
+
+The day's plan has transfers at several volumes. Group them by the smallest rack that fits, so
+each group runs with one tip setup:
+
+```{python}
+#| label: cell-streaming-batches
+plan = [("A1", 200), ("B1", 25), ("C1", 150), ("D1", 40)]
+
+def tip_for(volume):
+    return "10 uL" if volume <= 50 else "300 uL" if volume <= 300 else "1000 uL"
+
+for tip, group in itertools.groupby(
+    sorted(plan, key=lambda row: row[1]),                  # <1> sort by volume
+    key=lambda row: tip_for(row[1]),                       # group by the tip it needs
+):
+    print(f"{tip}:", [well for well, _ in group])
+```
+
+1. `groupby` batches only **consecutive** equal keys. `tip_for` grows with volume, so sorting by
+   volume keeps same-tip rows adjacent; in general, sort by the key you group by.
 
 **See also:** `traverse` [above](#traverse) does fixed-size batching over the whole plate, and
 `F.linear_tip_spot_generator` in [chapter 8](../part2/08_tips.qmd#stream-tips) is the same streaming
@@ -295,6 +401,11 @@ and the call looks like it silently did nothing.
 - `plate[...]` always returns a list. Colon is a range; commas are a set; an int is one well.
 - **`plate.get_item((row, col))` for row,column — `plate[(row, col)]` duplicates the well.**
 - `row()` / `column()` are the axis views; `row()` takes a letter or an index.
+- `plate[i]` fills column-major: `col, row = divmod(i, num_items_y)` — the modulo is the row count.
 - `traverse(batch_size, start, direction)` — `start` is required, and remember `repeat=True` + `islice`.
+- `cycle` rotates, `islice` pulls the next chunk, `product` builds every dose×replicate pairing,
+  and `groupby` batches consecutive equal keys — sort by that key first.
+- Border padding: `plate["B2:G11"]` selects the 60 interior wells directly; for drops that
+  aren't a clean rectangle, subtract a `set` of the lines to drop.
 - `get_quadrant("tl"/"tr"/"bl"/"br")` maps 96→384; checkerboard by default.
 - `summary(occupied_func)` prints a grid; the callback returns one character per well.
