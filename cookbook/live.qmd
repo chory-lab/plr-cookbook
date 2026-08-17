@@ -23,12 +23,12 @@ through the recording.
 <div id="plr-live">
   <p id="plr-status">Loading Pyodide…</p>
   <div id="plr-controls" style="display:none">
-    <button id="plr-prev">‹ Prev</button>
-    <button id="plr-play">Play</button>
-    <button id="plr-next">Next ›</button>
-    <button id="plr-restart">Restart</button>
-    <span id="plr-step" style="margin-left:0.75rem"></span>
-    <span id="plr-note" style="margin-left:0.75rem;font-style:italic"></span>
+  <button id="plr-prev">‹ Prev</button>
+  <button id="plr-play">Play</button>
+  <button id="plr-next">Next ›</button>
+  <button id="plr-restart">Restart</button>
+  <span id="plr-step" style="margin-left:0.75rem"></span>
+  <span id="plr-note" style="margin-left:0.75rem;font-style:italic"></span>
   </div>
   <div id="plr-svg-wrap" style="overflow:auto;border:1px solid #ddd;border-radius:6px;margin-top:0.5rem"></div>
   <details style="margin-top:0.5rem">
