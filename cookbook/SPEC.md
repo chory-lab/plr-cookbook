@@ -155,8 +155,8 @@ This chapter teaches the seam.
 
 **Must cover:** pandas vs plain `csv`, honestly — a three-column worklist does not need a DataFrame.
 
-**Cross-ref:** `@dry_run` (ch. 13) and `ChannelizedError` recovery (ch. 10) — a half-executed
-worklist is the shared failure case.
+**Cross-ref:** `ChannelizedError` recovery (ch. 10) — a half-executed worklist is the shared
+failure case.
 
 ---
 
@@ -241,7 +241,7 @@ import.
 |---|---|---|
 | A | Steps and composition | Protocol as a list of steps; `@step`; checkpoint/resume; **`aspirate` is not idempotent**, so retry granularity matters |
 | B | **Recovery policy as composed decorators** — the centrepiece | Three failure tiers (transport / state / semantic) wanting three responses. Decorator order = handler precedence. Partial retry for `ChannelizedError`. Policy is reusable, plans are not |
-| C | Dry run and simulation modes | `@dry_run`; the honest limits of simulation (state, not physics) |
+| C | Simulation | the honest limits of simulation (state, not physics) |
 | D | Logging and the run record | As a microlesson: two handlers, `_log_command` (called 25×), `%(relativeCreated)d`, `logger.exception()`, namespace filtering |
 | E | Testing without hardware | Four levels: pure functions → deck assertions → protocols vs chatterbox → **record/replay via `io.capture`** (`start_capture`, `validate`). Seed the RNG. **`SaverBackend` is gone in 0.2.2; no `pylabrobot.testing` package either** |
 | F | Data management | Run IDs, timestamped dirs, `pathlib`, provenance, snapshot/resume |

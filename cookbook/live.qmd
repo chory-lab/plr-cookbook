@@ -111,6 +111,8 @@ async def run():
     await lh.stop()
 
     return json.dumps(snaps)
+
+await run()
 </script>
 
 <script>
