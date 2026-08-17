@@ -68,6 +68,9 @@ format:
     # Puts an "Edit" button in every page's top bar that opens the current
     # page's source in GitHub's web editor (see _edit-button.html).
     include-in-header: _edit-button.html
+    # Patches the built-in search to be fuzzy: spaces match underscores, small
+    # typos still hit (see _search-fuzzy.html). Runs after fuse.min.js loads.
+    include-after-body: _search-fuzzy.html
     code-annotations: hover
     code-copy: true
     code-overflow: scroll

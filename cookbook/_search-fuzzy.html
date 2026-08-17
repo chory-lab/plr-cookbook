@@ -1,0 +1,67 @@
+<script>
+// Fuzzy search for the built-in index.
+//
+// Quarto's built-in search runs Fuse.js with a strict threshold (0.1) and
+// treats "pick up tips" and "pick_up_tips" as unrelated strings. This patch:
+//
+//   1. Relaxes the fuzzy threshold a little, so small typos still match.
+//   2. Also searches separator-insensitive variants of the query, so spaces
+//      match underscores and hyphens: "pick up tips" finds pick_up_tips,
+//      "deck setup" finds deck_setup, etc.
+//
+// It works by wrapping Fuse.prototype.search before the search UI first runs,
+// so every Fuse instance created by the built-in search uses the patch.
+(function () {
+  if (!window.Fuse) return;
+
+  var kOriginalSearch = window.Fuse.prototype.search;
+
+  function separatorsToUnderscore(s) {
+    return s.replace(/[\s\-]+/g, "_");
+  }
+
+  function separatorsToSpace(s) {
+    return s.replace(/[_\-]+/g, " ");
+  }
+
+  window.Fuse.prototype.search = function (pattern, options) {
+    // Build the query variants we want to try, most specific first.
+    var variants = [];
+    if (typeof pattern === "string" && pattern.trim() !== "") {
+      variants.push(pattern);
+      var us = separatorsToUnderscore(pattern.trim());
+      var sp = separatorsToSpace(pattern.trim());
+      if (us !== pattern) variants.push(us);
+      if (sp !== pattern) variants.push(sp);
+    } else {
+      variants.push(pattern);
+    }
+
+    // Relax the threshold only for the duration of these searches. Fuse
+    // options live on the instance, so save and restore around the call.
+    var hadThreshold = this.options && this.options.threshold;
+    if (this.options) this.options.threshold = 0.35;
+
+    var seen = {};
+    var merged = [];
+    var limit = options && options.limit ? options.limit : Infinity;
+
+    try {
+      for (var i = 0; i < variants.length; i++) {
+        var results = kOriginalSearch.call(this, variants[i], options);
+        for (var j = 0; j < results.length; j++) {
+          var refIndex = results[j].refIndex;
+          if (!seen[refIndex]) {
+            seen[refIndex] = true;
+            merged.push(results[j]);
+            if (merged.length >= limit) return merged;
+          }
+        }
+      }
+      return merged;
+    } finally {
+      if (this.options) this.options.threshold = hadThreshold;
+    }
+  };
+})();
+</script>

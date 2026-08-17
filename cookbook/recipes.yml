@@ -304,32 +304,37 @@
 - title: "Compose behaviour with decorators"
   path: part3/13_system_design.qmd#recovery
   chapter: 13
-  apis: "decorator order, retry, recover, ChannelizedError.errors, partial retry, asyncio.sleep"
+  apis: "decorator order, functools.wraps, handle_errors, ChannelizedError.errors, partial retry, with_fresh_tip, reuse_tip, record_step, executions"
 
-- title: "Dry-run a protocol"
-  path: part3/13_system_design.qmd#dry-run
-  chapter: 13
-  apis: "dry run, LiquidHandlerChatterboxBackend, validation before execution"
-
-- title: "Log at three levels"
+- title: "Log at process, command, and firmware levels"
   path: part3/13_system_design.qmd#logging
   chapter: 13
-  apis: "logging, LOG_LEVEL_IO, pylabrobot logger, _log_command, relativeCreated, logger.exception, verbose, setup_logger, propagate, FileHandler, StreamHandler"
+  apis: "logging, LOG_LEVEL_IO, pylabrobot logger, logger.exception, propagate, FileHandler, StreamHandler"
 
-- title: "Test without hardware"
-  path: part3/13_system_design.qmd#testing
-  chapter: 13
-  apis: "pylabrobot.io.capture, start_capture, stop_capture, validate, end_validation, CaptureReader, ValidationError, get_capture_or_validation_active"
-
-- title: "Give a run its own directory"
+- title: "Organize data by experiment and run"
   path: part3/13_system_design.qmd#run-data
   chapter: 13
-  apis: "pathlib, datetime, run id, deck.save, save_state_to_file, provenance"
+  apis: "pathlib, datetime, run id, manifest.json, deck.save, save_state_to_file, provenance, config.json"
 
-- title: "Configure PLR from a file"
-  path: part3/13_system_design.qmd#config
+- title: "Track samples and plate maps in SQLite"
+  path: part3/13_system_design.qmd#sqlite
   chapter: 13
-  apis: "pylabrobot.config, Config, load_config, get_config_file, IniLoader, JsonLoader, MultiLoader, setup_logger"
+  apis: "sqlite3, connect, executemany, commit, PRIMARY KEY, datetime.isoformat, plate map, sample_events"
+
+- title: "Make simulated time and data explicit"
+  path: part3/13_system_design.qmd#simulation
+  chapter: 13
+  apis: "SimClock, simulated_od, random.Random, seeded RNG, synthetic data, math.exp, growth rate"
+
+- title: "Keep the scheduler queue in SQLite"
+  path: part3/13_system_design.qmd#scheduler
+  chapter: 13
+  apis: "sqlite3, job queue, submit, next_job, claim, complete, fail, priority, resource, not_before, persistent queue"
+
+- title: "Simulate a small automated platform"
+  path: part3/13_system_design.qmd#platform
+  chapter: 13
+  apis: "simulation, SimClock, SimCulture, scheduler, invariants, resource exclusivity, process logging, run directory"
 
 - title: "Measure a plate for a definition"
   path: part4/14_custom_labware.qmd#measure
@@ -421,21 +426,6 @@
   chapter: 7
   apis: "zip, enumerate, zip strict, vols, use_channels"
 
-- title: "Track samples in SQLite"
-  path: part3/13_system_design.qmd#sqlite
-  chapter: 13
-  apis: "sqlite3, connect, executemany, commit, PRIMARY KEY, datetime.isoformat, plate map"
-
-- title: "Run machines concurrently"
-  path: part3/13_system_design.qmd#concurrency
-  chapter: 13
-  apis: "asyncio.gather, asyncio.TaskGroup, return_exceptions, coroutines"
-
-- title: "Make simulated time and data explicit"
-  path: part3/13_system_design.qmd#simulation
-  chapter: 13
-  apis: "asyncio.sleep, dependency injection, simulated clock, synthetic data, seeding"
-
 - title: "Gripper parameters"
   path: part2/09_moving_labware.qmd#gripper
   chapter: 9
@@ -445,11 +435,6 @@
   path: part2/09_moving_labware.qmd#pickup-spots
   chapter: 9
   apis: "preferred_pickup_location, pick_up_resource, pickup_distance_from_top, Coordinate"
-
-- title: "Run a worker loop against a queue"
-  path: part3/13_system_design.qmd#worker-loop
-  chapter: 13
-  apis: "asyncio.Queue, queue.get, queue.put, task_done, join, asyncio.create_task, sentinel, queue.Queue, random.seed"
 
 - title: "Put a tip on and take it off"
   path: part1/04_pipetting.qmd#tips

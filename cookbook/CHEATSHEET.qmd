@@ -297,7 +297,7 @@ table(C, [
 Captures record from the io transport layer only — **nothing from a chatterbox**.
 `pylabrobot.config` configures **logging only**. PLR logs every call at `DEBUG` to the
 `pylabrobot` logger, which does not propagate.
-[Chapter 13](part3/13_system_design.qmd#testing).
+[Chapter 13](part3/13_system_design.qmd#logging).
 
 ---
 
