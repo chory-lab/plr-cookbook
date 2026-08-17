@@ -24,6 +24,7 @@ from pylabrobot.liquid_handling.backends import LiquidHandlerChatterboxBackend
 from pylabrobot.liquid_handling.errors import ChannelizedError
 from pylabrobot.resources import (
     STARLetDeck, PLT_CAR_L5AC_A00, cor_96_wellplate_360uL_Fb,
+    nest_1_troughplate_195000uL_Vb,
     TIP_CAR_288_C00, opentrons_96_filtertiprack_200ul,
     set_volume_tracking, set_tip_tracking,
 )
@@ -35,6 +36,7 @@ await lh.setup()
 carrier = PLT_CAR_L5AC_A00(name="carrier")
 lh.deck.assign_child_resource(carrier, rails=10)
 carrier[0] = plate = cor_96_wellplate_360uL_Fb(name="plate")
+carrier[1] = trough = nest_1_troughplate_195000uL_Vb(name="buffer")
 
 tips = TIP_CAR_288_C00(name="tip_carrier")
 lh.deck.assign_child_resource(tips, rails=2)
@@ -43,6 +45,7 @@ tips[0] = rack = opentrons_96_filtertiprack_200ul(name="rack")
 set_volume_tracking(True)
 set_tip_tracking(True)
 plate["A1"][0].set_volume(1000)
+trough["A1"][0].set_volume(10000)
 
 scratch = Path(tempfile.mkdtemp(prefix="cookbook_system_"))
 run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -412,7 +415,7 @@ configuration.
 ::: {.recipe}
 
 Decorators are useful when the same behaviour needs to surround many protocol functions. Three
-common laboratory examples are error handling, tip handling, and process-state recording.
+common laboratory examples are error handling, tip handling, and tip-volume control.
 
 Two mechanics are worth stating before the patterns are written:
 
@@ -550,119 +553,104 @@ print("two transfers on one reused tip, tip returned")
 The point is simply that the transfer logic (`aspirate`, `dispense`, `mix`) does not have to repeat
 the same pick-up / cleanup / return-or-discard logic everywhere.
 
-### Record step state
+### Control tip volume when plating from a trough
 
-A decorator can also write a process step into SQLite:
+A single aspirate limits how much can be dispensed to whatever fits in the tips. When plating a
+reagent from a trough into many wells, the tips can instead be tracked and topped back up from the
+trough whenever the tracked volume runs low, so one set of tips covers the whole plate:
 
 ```{python}
-#| label: cell-decorator-step
+#| label: cell-decorator-volume
+def with_reagent_refill(source, capacity):
+    def decorator(fn):
+        @functools.wraps(fn)
+        async def wrapper(lh, volume, *args, **kwargs):
+            mounted = [
+                (i, tip)
+                for i, tip in enumerate(lh.get_mounted_tips())      # <1>
+                if tip is not None
+            ]
+
+            if not mounted:                                          # <2>
+                raise RuntimeError("no tips mounted")
+
+            refill = [
+                (channel, capacity - tip.tracker.get_used_volume())
+                for channel, tip in mounted
+                if tip.tracker.get_used_volume() < volume            # <3>
+            ]
+
+            if refill:
+                channels = [channel for channel, _ in refill]
+                top_ups = [amount for _, amount in refill]
+
+                protocol_log.info(
+                    "re-aspirating reagent from %s on channels %s",
+                    source.parent.name,
+                    channels,
+                )
+
+                await lh.aspirate(
+                    [source] * len(channels),
+                    vols=top_ups,
+                    use_channels=channels,                            # <4>
+                )
+
+            return await fn(lh, volume, *args, **kwargs)
+
+        return wrapper
+    return decorator
+```
+
+1. `get_mounted_tips()` reports the tips in channel order. `enumerate` keeps the channel index
+   attached to each tip, so a refill can address the exact channels that own tips rather than
+   assuming the contiguous block 0–7. It relies on tip tracking, enabled in Setup.
+2. A volume check is meaningless with no tips on the head, so fail loudly instead of passing
+   silently.
+3. Each tip's tracker records the liquid in it: `aspirate` adds, `dispense` subtracts. The per-tip
+   volumes need not be equal, so instead of taking a `min()` over all tips, only tips whose tracked
+   volume is below what the next call needs are refilled — each back up to `capacity`. A tip
+   carrying more than the others is left alone.
+4. `use_channels` selects exactly the refilled channels. Repeating the single trough well once per
+   channel is the single-resource idiom from [chapter 4](../part1/04_pipetting.qmd#spread), and
+   `vols` must match `use_channels`.
+
+Then a plating function contains only the dispense:
+
+```{python}
+#| label: cell-decorator-volume-use
 #| output: false
-db.execute("""
-    CREATE TABLE IF NOT EXISTS executions (
-        id          INTEGER PRIMARY KEY,
-        run_id      TEXT,
-        step        TEXT,
-        status      TEXT,
-        started     TEXT,
-        finished    TEXT,
-        error       TEXT
-    )
-""")
+trough_well = trough["A1"][0]
+carrier[2] = dest = cor_96_wellplate_360uL_Fb(name="dest")   # a fresh plate
+
+@with_reagent_refill(trough_well, capacity=200)
+async def plate_column(lh, volume, dest_column):
+    await lh.dispense(dest_column, vols=[volume] * 8)
+
+await lh.pick_up_tips(rack["A1:H1"])
+for column in range(12):
+    await plate_column(lh, 60, dest.column(column))
+remaining = [round(t.tracker.get_used_volume(), 1)
+             for t in lh.get_mounted_tips()]
+await lh.discard_tips()
 ```
 
-Then:
+200 µL tips dispensing 60 µL per column can plate three columns before the tracked volume runs low,
+so the trough is re-aspirated on columns 1, 4, 7, and 10 — the tips never run dry, and one tip set
+covers the whole plate. Each refill is a process-tier log record (the
+[logging recipe](#logging) above), so the decision history survives:
 
 ```{python}
-#| label: cell-decorator-step-record
-def record_step(fn):
-    @functools.wraps(fn)
-    async def wrapper(*args, **kwargs):
-        started = datetime.now().isoformat()
-
-        cur = db.execute(
-            """
-            INSERT INTO executions
-            (run_id, step, status, started)
-            VALUES (?, ?, 'running', ?)
-            """,
-            (run_id, fn.__name__, started),
-        )
-        step_id = cur.lastrowid
-        db.commit()
-
-        try:
-            result = await fn(*args, **kwargs)
-        except Exception as exc:
-            db.execute(
-                """
-                UPDATE executions
-                SET status='failed',
-                    finished=?,
-                    error=?
-                WHERE id=?
-                """,
-                (datetime.now().isoformat(),
-                 repr(exc), step_id),
-            )
-            db.commit()
-            raise
-
-        db.execute(
-            """
-            UPDATE executions
-            SET status='complete',
-                finished=?
-            WHERE id=?
-            """,
-            (datetime.now().isoformat(), step_id),
-        )
-        db.commit()
-
-        return result
-
-    return wrapper
+#| label: cell-decorator-volume-log
+for line in (scratch / "run.log").read_text().splitlines():
+    if "re-aspirating" in line:
+        print(line)
+print("leftover per tip:", remaining)
 ```
 
-Use it like:
-
-```{python}
-#| label: cell-decorator-step-use
-#| output: false
-@record_step
-async def read_plate(reader, plate):
-    return {"well": "A1", "od": 0.62}
-
-result = await read_plate(None, plate)
-```
-
-The database can now answer:
-
-```{python}
-#| label: cell-decorator-step-query
-for row in db.execute(
-    """
-    SELECT step, status, started, finished
-    FROM executions
-    WHERE run_id = ?
-    ORDER BY id
-    """,
-    (run_id,),
-):
-    print(row)
-```
-
-Decorator order matters when wrappers are combined:
-
-```python
-#| eval: false
-@record_step
-@retry(3)
-async def read_plate(...):
-    ...
-```
-
-represents one recorded logical step containing several attempts, while the opposite order can make
-each retry a separately recorded call.
+With real hardware the source trough must hold enough reagent for the sum of all refills; the
+wrapper only decides *when* to go back to the trough, it does not check the trough's own tracked
+volume.
 
 :::
 
@@ -1673,7 +1661,8 @@ The same invariants can then test whether the orchestration still behaves correc
 - Exception wrappers can centralize logging and recovery policy; partial liquid-handling failures
   should not be blindly retried.
 - Tip acquisition and cleanup can be separated from the scientific operation itself.
-- Step-recording decorators can turn function execution into inspectable process state.
+- Volume-control decorators can track the liquid in the tips and re-aspirate from a trough when it
+  runs low.
 - Simulated time removes wall-clock waiting from long protocol tests.
 - Seeded stochastic measurements provide variable but reproducible simulated experimental data.
 - A scheduler queue can live in SQLite rather than in the runtime that happens to consume it.
