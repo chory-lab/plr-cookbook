@@ -49,6 +49,14 @@ from pylabrobot.resources import (
 set_volume_tracking(enabled=True)
 
 def snapshot(deck):
+    import math
+    def finite(v):
+        if v is None or isinstance(v, bool):
+            return v
+        try:
+            return v if math.isfinite(v) else None
+        except TypeError:
+            return v
     items = []
     for r in deck.get_all_children():
         tn = type(r).__name__
@@ -70,8 +78,8 @@ def snapshot(deck):
             "name": r.name, "kind": kind, "type": tn,
             "x": round(al.x, 1), "y": round(al.y, 1),
             "w": round(r.get_size_x(), 1), "h": round(r.get_size_y(), 1),
-            "vol": getattr(tr, "volume", None),
-            "max": getattr(tr, "max_volume", None),
+            "vol": finite(getattr(tr, "volume", None)),
+            "max": finite(getattr(tr, "max_volume", None)),
         })
     return items
 
