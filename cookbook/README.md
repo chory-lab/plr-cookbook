@@ -52,8 +52,8 @@ recipes.yml           recipe registry — edit when adding a recipe
 CHEATSHEET.qmd        flat API lookup
 part1/                ch 1–6    getting things done
 part2/                ch 7–12   working protocols
-part3/                ch 13     building systems
-part4/                ch 14–15  extending PLR — guided builds, every step given
+part3/                ch 13–16  building systems
+part4/                ch 17–18  extending PLR — guided builds, every step given
 ```
 
 ## Deferred

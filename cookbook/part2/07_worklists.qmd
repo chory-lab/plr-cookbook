@@ -39,7 +39,7 @@ print("scratch dir:", scratch)
 1. Volume tracking is off by default. The results recipe reads well volumes back out, which only
    reports anything once it is on.
 2. Recipes write their files to a throwaway directory, so the notebook leaves nothing behind.
-   Real runs use a timestamped run directory instead — [chapter 13](../part3/13_system_design.qmd)
+   Real runs use a timestamped run directory instead — [chapter 13](../part3/13_record_runs.qmd#run-data)
    makes that the rule.
 
 ::: {.column-margin}
@@ -277,7 +277,7 @@ say `0` or `""` for "nothing here" — mixing the two breaks every consumer that
 the column.
 :::
 
-**See also:** a run record with timestamps is a *log*, not a CSV — [chapter 13](../part3/13_system_design.qmd)
+**See also:** a run record with timestamps is a *log*, not a CSV — [chapter 13](../part3/13_record_runs.qmd#logging)
 shows why the format should follow the job.
 
 :::
@@ -318,11 +318,11 @@ Log lines — the audit (a slice of PLR's `_log_command` output):
 
 **PLR gives you the audit for free.**
 
-Every operation is already logged through `logging` ([chapter 13](../part3/13_system_design.qmd)).
+Every operation is already logged through `logging` ([chapter 13](../part3/13_record_runs.qmd#logging)).
 A run log is three lines of `basicConfig`, and is greppable and diffable.
 
 **See also:** `sort_by_xy_and_chunk_by_x` for the same data in a different shape; the format rule
-is restated at system level in [chapter 13](../part3/13_system_design.qmd).
+is restated at system level in [chapter 13](../part3/13_record_runs.qmd#logging).
 
 :::
 

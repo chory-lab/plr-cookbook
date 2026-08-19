@@ -22,7 +22,7 @@ The user must ensure that their instruments are fully calibrated before running 
   the API it uses.
 - **[Cheat sheet](CHEATSHEET.qmd)** — flat lookup: function, signature, one line.
 - **Parts I–II** — broad coverage of PLR's everyday surface. Read straight through once.
-- **Part III** — the cross-cutting concerns: error recovery, logging, testing, data, config.
+- **Part III** — the cross-cutting concerns: logging, run data, SQLite state, decorators, simulation.
 - **Part IV** — two guided builds, start to finish, every step given.
 
 ## Everything here runs without a robot

@@ -1,0 +1,371 @@
+---
+title: "Keep state in SQLite"
+---
+
+State that must survive one Python process — sample identity, plate maps, measurements, and queued
+work — fits naturally in a small SQLite database. This chapter covers the two shapes that come up
+most: a plate map that persists across notebook restarts, and a job queue that outlives whatever
+happens to be executing it.
+
+## Setup {.unnumbered}
+
+```{python}
+#| label: cell-setup
+#| output: false
+import json, sqlite3, tempfile, time
+from datetime import datetime
+from pathlib import Path
+
+scratch = Path(tempfile.mkdtemp(prefix="cookbook_sqlite_"))
+run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+class SimClock:                       # <1>
+    def __init__(self):
+        self.time = 0.0
+
+    def now(self):
+        return self.time
+
+    def advance(self, seconds):
+        self.time += seconds
+
+    def advance_to(self, when):
+        self.time = max(self.time, when)
+
+clock = SimClock()
+print("scratch:", scratch)
+```
+
+1. A clock that never waits, so the delayed-work cell at the end can show "thirty minutes later"
+   without sleeping. The [simulation chapter](16_simulated_platform.qmd#simulation) builds on the
+   same idea.
+
+---
+
+## Track samples and plate maps in SQLite {#sqlite}
+
+::: {.recipe}
+
+Once sample identity needs to survive a notebook restart, a small SQLite database is often enough.
+`sqlite3` is in the standard library and writes one file.
+
+A plate map can be represented directly:
+
+```{python}
+#| label: cell-sqlite-create
+#| output: false
+db = sqlite3.connect(scratch / "samples.sqlite")       # <1>
+db.execute("""
+    CREATE TABLE IF NOT EXISTS samples (
+        run_id      TEXT,
+        plate       TEXT,
+        well        TEXT,
+        sample_id   TEXT,
+        volume_ul   REAL,
+        recorded    TEXT,
+        PRIMARY KEY (run_id, plate, well)
+    )
+""")
+```
+
+1. A path creates the file if it does not exist; `":memory:"` gives a database that disappears
+   with the process.
+
+Insert or update wells:
+
+```{python}
+#| label: cell-sqlite-insert
+#| output: false
+now = datetime.now().isoformat(timespec="seconds")
+
+db.executemany(
+    """
+    INSERT OR REPLACE INTO samples
+    VALUES (?, ?, ?, ?, ?, ?)
+    """,
+    [
+        (run_id, "plate_1", "A1", "S001", 100, now),
+        (run_id, "plate_1", "B1", "S002", 100, now),
+        (run_id, "plate_1", "C1", "S003",  50, now),
+    ],
+)                                       # <1>
+db.commit()                             # <2>
+```
+
+1. Parameter placeholders (`?`), never string formatting. The primary key is `(run_id, plate,
+   well)` — one row per well per run — so `INSERT OR REPLACE` updates a well in place rather than
+   duplicating it.
+2. Nothing is written until `commit()`.
+
+Read the plate map later:
+
+```{python}
+#| label: cell-sqlite-read
+rows = db.execute(
+    """
+    SELECT well, sample_id, volume_ul
+    FROM samples
+    WHERE run_id = ? AND plate = ?
+    ORDER BY well
+    """,
+    (run_id, "plate_1"),
+)
+
+for well, sample, volume in rows:
+    print(well, sample, volume)
+```
+
+SQLite is useful here because the information is structured and queryable but does not require a
+database server.
+
+A second table can hold sample history instead of only the latest plate map:
+
+```{python}
+#| label: cell-sqlite-events
+#| output: false
+db.execute("""
+    CREATE TABLE IF NOT EXISTS sample_events (
+        run_id      TEXT,
+        sample_id   TEXT,
+        event       TEXT,
+        value       REAL,
+        recorded    TEXT
+    )
+""")
+
+db.execute(
+    "INSERT INTO sample_events VALUES (?, ?, ?, ?, ?)",
+    (run_id, "S001", "od", 0.62, now),
+)
+db.commit()
+```
+
+That lets the same file contain both a current plate map and a simple history of measurements or
+sample operations.
+
+**See also:** the one-run formats are in [chapter 7](../part2/07_worklists.qmd#formats); this is
+the across-runs one.
+
+:::
+
+---
+
+## Keep the scheduler queue in SQLite {#scheduler}
+
+::: {.recipe}
+
+A scheduler becomes more useful when queued work survives the Python process that happens to be
+executing it. An in-memory `asyncio.Queue` disappears with its process; SQLite can act as a small
+persistent job queue instead.
+
+Start with a table:
+
+```{python}
+#| label: cell-scheduler-table
+#| output: false
+db.execute("""
+    CREATE TABLE IF NOT EXISTS jobs (
+        id          INTEGER PRIMARY KEY,
+        operation   TEXT NOT NULL,
+        resource    TEXT NOT NULL,
+        payload     TEXT,
+        priority    INTEGER DEFAULT 0,
+        status      TEXT DEFAULT 'queued',
+        not_before  REAL DEFAULT 0,
+        created     REAL NOT NULL,
+        started     REAL,
+        finished    REAL,
+        error       TEXT
+    )
+""")
+```
+
+Submit work by inserting a row:
+
+```{python}
+#| label: cell-scheduler-submit
+def submit(
+    db,
+    operation,
+    resource,
+    payload=None,
+    priority=0,
+    not_before=0,
+):
+    db.execute(
+        """
+        INSERT INTO jobs
+        (operation, resource, payload,
+         priority, not_before, created)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            operation,
+            resource,
+            json.dumps(payload or {}),
+            priority,
+            not_before,
+            time.time(),
+        ),
+    )
+    db.commit()
+```
+
+For example:
+
+```{python}
+#| label: cell-scheduler-submit-use
+#| output: false
+submit(
+    db,
+    operation="read_plate",
+    resource="reader",
+    payload={"plate": "plate_1"},
+    priority=10,
+)
+```
+
+Find the next eligible job for one resource:
+
+```{python}
+#| label: cell-scheduler-next
+def next_job(db, resource, now):
+    return db.execute(
+        """
+        SELECT id, operation, payload
+        FROM jobs
+        WHERE status = 'queued'
+          AND resource = ?
+          AND not_before <= ?
+        ORDER BY priority DESC, created ASC
+        LIMIT 1
+        """,
+        (resource, now),
+    ).fetchone()
+```
+
+Claim it:
+
+```{python}
+#| label: cell-scheduler-claim
+def claim(db, job_id, now):
+    cur = db.execute(
+        """
+        UPDATE jobs
+        SET status = 'running',
+            started = ?
+        WHERE id = ?
+          AND status = 'queued'
+        """,
+        (now, job_id),
+    )
+    db.commit()
+
+    return cur.rowcount == 1
+```
+
+And finish it:
+
+```{python}
+#| label: cell-scheduler-complete
+def complete(db, job_id, now):
+    db.execute(
+        """
+        UPDATE jobs
+        SET status = 'complete',
+            finished = ?
+        WHERE id = ?
+        """,
+        (now, job_id),
+    )
+    db.commit()
+```
+
+Failures can be recorded similarly:
+
+```{python}
+#| label: cell-scheduler-fail
+def fail(db, job_id, now, error):
+    db.execute(
+        """
+        UPDATE jobs
+        SET status = 'failed',
+            finished = ?,
+            error = ?
+        WHERE id = ?
+        """,
+        (now, repr(error), job_id),
+    )
+    db.commit()
+```
+
+The scheduler state is now ordinary persistent data:
+
+```text
+queued
+running
+complete
+failed
+```
+
+and work can additionally be ordered by `resource`, `priority`, `not_before`, and `created`.
+
+The execution runtime is separate. One worker could be synchronous:
+
+```python
+#| eval: false
+while True:
+    job = next_job(db, "reader", time.time())
+
+    if job is None:
+        time.sleep(0.1)
+        continue
+
+    job_id, operation, payload = job
+
+    if not claim(db, job_id, time.time()):
+        continue
+
+    try:
+        run(operation, json.loads(payload))
+    except Exception as exc:
+        fail(db, job_id, time.time(), exc)
+    else:
+        complete(db, job_id, time.time())
+```
+
+Another implementation could use threads, processes, `asyncio`, or workers on separate computers.
+The queue does not depend on any of them.
+
+### Delayed work
+
+`not_before` is enough to represent a simple incubation:
+
+```{python}
+#| label: cell-scheduler-delayed
+#| output: false
+submit(
+    db,
+    operation="read_plate",
+    resource="reader",
+    payload={"plate": "plate_1"},
+    not_before=clock.now() + 1800,
+)
+```
+
+The scheduler does not need to sleep for thirty minutes — the job simply becomes eligible when
+`clock.now() >= not_before`. With a real clock that happens after thirty wall-clock minutes; with
+`SimClock`, the simulation can jump directly there.
+
+:::
+
+---
+
+## What to remember
+
+- SQLite is the across-process layer: `sqlite3` is stdlib, writes one file, and needs no server.
+- Use `?` parameter placeholders and `db.commit()`; nothing is written until commit.
+- One row per well per run, keyed on `(run_id, plate, well)`, makes `INSERT OR REPLACE` an
+  update-in-place.
+- A persistent job queue is just a table with `status`, `priority`, `resource`, and `not_before` —
+  the execution runtime (threads, processes, `asyncio`, remote workers) is a separate concern.

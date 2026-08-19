@@ -1,0 +1,812 @@
+---
+title: "Simulate time and a platform"
+---
+
+Long waits and physical measurements are two reasons laboratory code is difficult to test quickly.
+This chapter substitutes simulated time and stochastic measurements, then combines them into a
+simulated multi-instrument platform that tests process invariants — resource exclusivity, timing,
+completion — without hardware or wall-clock waiting.
+
+## Setup {.unnumbered}
+
+```{python}
+#| label: cell-setup
+#| output: false
+import json, logging, math, random, sqlite3, tempfile
+from datetime import datetime
+from pathlib import Path
+
+scratch = Path(tempfile.mkdtemp(prefix="cookbook_platform_"))
+print("scratch:", scratch)
+```
+
+---
+
+## Simulate time and data together {#simulation}
+
+::: {.recipe}
+
+A minimal simulated clock:
+
+```{python}
+#| label: cell-simclock
+class SimClock:
+    def __init__(self):
+        self.time = 0.0
+
+    def now(self):
+        return self.time
+
+    def advance(self, seconds):
+        self.time += seconds
+
+    def advance_to(self, when):
+        self.time = max(self.time, when)
+```
+
+Instead of asking the operating system what time it is — `now = clock.now()` — and instead of
+actually waiting thirty minutes — `clock.advance(30 * 60)` — the protocol depends on the clock
+object, so either version can be substituted.
+
+The same idea applies to measurements. A simple stochastic OD model:
+
+```{python}
+#| label: cell-simod
+rng = random.Random(42)          # <1>
+
+def simulated_od(
+    initial_od,
+    growth_rate,
+    elapsed,
+    noise=0.02,
+):
+    true_od = initial_od * math.exp(
+        growth_rate * elapsed
+    )
+    return true_od + rng.gauss(0, noise)
+```
+
+1. Seeding the random-number generator gives the simulation stochastic behaviour while keeping a
+   failing test reproducible.
+
+For example:
+
+```{python}
+#| label: cell-simod-run
+clock = SimClock()
+
+for _ in range(4):
+    clock.advance(30 * 60)
+
+    od = simulated_od(
+        initial_od=0.1,
+        growth_rate=0.0004,
+        elapsed=clock.now(),
+    )
+
+    print(clock.now(), round(od, 3))
+```
+
+Each culture can also have its own growth rate:
+
+```{python}
+#| label: cell-simod-cultures
+cultures = {
+    "plate_1": rng.gauss(0.00040, 0.00002),
+    "plate_2": rng.gauss(0.00040, 0.00002),
+    "plate_3": rng.gauss(0.00040, 0.00002),
+}
+print({k: round(v, 6) for k, v in cultures.items()})
+```
+
+A small object can keep the biological state together:
+
+```{python}
+#| label: cell-culture
+class Culture:
+    def __init__(self, od, rate, seed):
+        self.od = od
+        self.rate = rate
+        self.rng = random.Random(seed)
+
+    def grow(self, seconds):
+        self.od *= math.exp(self.rate * seconds)
+
+    def measure(self):
+        return self.od + self.rng.gauss(0, 0.02)
+
+    def dilute(self, factor):
+        self.od /= factor
+```
+
+Then:
+
+```{python}
+#| label: cell-culture-run
+culture = Culture(od=0.1, rate=0.0004, seed=1)
+culture.grow(1800)
+od = culture.measure()
+
+if od > 0.8:
+    culture.dilute(4)
+
+print("od after 30 min:", round(od, 3))
+```
+
+Nothing about that test requires actual wall-clock waiting or a plate reader.
+
+**See also:** `pylabrobot.io.capture` in [chapter 12](../part2/12_hardware.qmd) records real device
+I/O for replay, which is the hardware-level counterpart to this.
+
+:::
+
+---
+
+## Simulate a small automated platform {#platform}
+
+::: {.recipe}
+
+The previous pieces can now be combined into a larger test.
+
+Consider a platform with:
+
+```text
+1 liquid handler
+1 plate reader
+4 cultures
+```
+
+Each culture follows:
+
+```text
+prepare
+   ↓
+incubate
+   ↓
+read OD
+   ↓
+OD >= threshold?
+   ├── no  → incubate → read again
+   │
+   └── yes → dilute → incubate → read again
+```
+
+We will use a timestamped run directory, SQLite plate/sample tables, SQLite scheduler jobs,
+process logging, a simulated clock, stochastic cultures, simulated instruments, and invariant
+tests.
+
+### Create the simulated run
+
+```{python}
+#| label: cell-platform-dir
+#| output: false
+sim_run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+sim_run_dir = scratch / "runs" / sim_run_id
+
+for name in ["raw", "derived", "logs", "state"]:
+    (sim_run_dir / name).mkdir(parents=True, exist_ok=True)
+
+sim_db = sqlite3.connect(sim_run_dir / "run.sqlite")
+```
+
+A small manifest:
+
+```{python}
+#| label: cell-platform-manifest
+manifest = {
+    "run_id": sim_run_id,
+    "plates": [
+        "plate_1",
+        "plate_2",
+        "plate_3",
+        "plate_4",
+    ],
+    "threshold": 0.8,
+    "incubation_seconds": 1800,
+}
+
+(sim_run_dir / "manifest.json").write_text(
+    json.dumps(manifest, indent=2)
+)
+
+print(json.loads((sim_run_dir / "manifest.json").read_text()))
+```
+
+Configure process logging:
+
+```{python}
+#| label: cell-platform-log
+#| output: false
+sim_log = logging.getLogger(f"run.{sim_run_id}")
+sim_log.setLevel(logging.INFO)
+sim_log.propagate = False
+
+sim_handler = logging.FileHandler(
+    sim_run_dir / "logs" / "process.log"
+)
+sim_handler.setFormatter(logging.Formatter(
+    "%(asctime)s %(levelname)s %(message)s"
+))
+sim_log.addHandler(sim_handler)
+```
+
+### Create sample and scheduler tables
+
+```{python}
+#| label: cell-platform-tables
+#| output: false
+sim_db.execute("""
+    CREATE TABLE samples (
+        plate       TEXT PRIMARY KEY,
+        sample_id   TEXT,
+        reads       INTEGER DEFAULT 0,
+        dilutions   INTEGER DEFAULT 0,
+        finished    INTEGER DEFAULT 0
+    )
+""")
+
+sim_db.execute("""
+    CREATE TABLE jobs (
+        id          INTEGER PRIMARY KEY,
+        operation   TEXT,
+        resource    TEXT,
+        plate       TEXT,
+        status      TEXT DEFAULT 'queued',
+        priority    INTEGER DEFAULT 0,
+        not_before  REAL DEFAULT 0,
+        started     REAL,
+        finished    REAL
+    )
+""")
+
+sim_db.execute("""
+    CREATE TABLE executions (
+        job_id      INTEGER,
+        operation   TEXT,
+        resource    TEXT,
+        plate       TEXT,
+        started     REAL,
+        finished    REAL
+    )
+""")
+
+for i in range(4):
+    sim_db.execute(
+        """
+        INSERT INTO samples(plate, sample_id)
+        VALUES (?, ?)
+        """,
+        (f"plate_{i+1}", f"S{i+1:03d}"),
+    )
+
+sim_db.commit()
+```
+
+### Simulate the cultures
+
+```{python}
+#| label: cell-platform-cultures
+#| output: false
+sim_clock = SimClock()
+
+class SimCulture:
+    def __init__(self, od, rate, seed):
+        self.od = od
+        self.rate = rate
+        self.last_update = 0
+        self.rng = random.Random(seed)
+
+    def update(self, now):
+        elapsed = now - self.last_update
+        self.od *= math.exp(self.rate * elapsed)
+        self.last_update = now
+
+    def measure(self, now):
+        self.update(now)
+        return self.od + self.rng.gauss(0, 0.015)
+
+    def dilute(self, now, factor=4):
+        self.update(now)
+        self.od /= factor
+
+sim_rng = random.Random(42)
+
+cultures = {
+    f"plate_{i+1}": SimCulture(
+        od=0.10,
+        rate=sim_rng.gauss(0.00040, 0.000025),
+        seed=100 + i,
+    )
+    for i in range(4)
+}
+```
+
+### Submit scheduler jobs
+
+For the simulation, the scheduler queue is still the SQLite table:
+
+```{python}
+#| label: cell-platform-submit
+def submit_job(
+    operation,
+    resource,
+    plate,
+    not_before=0,
+    priority=0,
+):
+    sim_db.execute(
+        """
+        INSERT INTO jobs
+        (operation, resource, plate,
+         priority, not_before)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            operation,
+            resource,
+            plate,
+            priority,
+            not_before,
+        ),
+    )
+    sim_db.commit()
+```
+
+Start each plate with preparation:
+
+```{python}
+#| label: cell-platform-submit-use
+#| output: false
+for plate in cultures:
+    submit_job(
+        "prepare",
+        "liquid_handler",
+        plate,
+    )
+```
+
+### Simulate resource occupancy
+
+Give operations durations:
+
+```{python}
+#| label: cell-platform-durations
+DURATION = {
+    "prepare": 120,
+    "read": 60,
+    "dilute": 90,
+}
+
+resource_free_at = {
+    "liquid_handler": 0.0,
+    "reader": 0.0,
+}
+```
+
+Find the next queued job that can start:
+
+```{python}
+#| label: cell-platform-ready
+def ready_jobs():
+    rows = sim_db.execute(
+        """
+        SELECT id, operation, resource,
+               plate, priority, not_before
+        FROM jobs
+        WHERE status = 'queued'
+          AND not_before <= ?
+        ORDER BY priority DESC, id ASC
+        """,
+        (sim_clock.now(),),
+    ).fetchall()
+
+    return [
+        row for row in rows
+        if resource_free_at[row[2]] <= sim_clock.now()
+    ]
+```
+
+Start one:
+
+```{python}
+#| label: cell-platform-start
+def start_job(row):
+    job_id, operation, resource, plate, _, _ = row
+
+    started = sim_clock.now()
+    finished = started + DURATION[operation]
+
+    sim_db.execute(
+        """
+        UPDATE jobs
+        SET status='running',
+            started=?,
+            finished=?
+        WHERE id=?
+        """,
+        (started, finished, job_id),
+    )
+
+    resource_free_at[resource] = finished
+
+    sim_db.commit()
+
+    sim_log.info(
+        "start %s %s on %s",
+        operation,
+        plate,
+        resource,
+    )
+```
+
+The operation is considered running until its simulated finish time.
+
+### Complete jobs and generate follow-up work
+
+```{python}
+#| label: cell-platform-constants
+THRESHOLD = 0.8
+INCUBATION = 1800
+MAX_READS = 5
+```
+
+```{python}
+#| label: cell-platform-finish
+#| output: false
+def finish_jobs():
+    rows = sim_db.execute(
+        """
+        SELECT id, operation, resource,
+               plate, started, finished
+        FROM jobs
+        WHERE status='running'
+          AND finished <= ?
+        """,
+        (sim_clock.now(),),
+    ).fetchall()
+
+    for job_id, operation, resource, plate, started, finished in rows:
+
+        if operation == "prepare":
+            submit_job(
+                "read",
+                "reader",
+                plate,
+                not_before=finished + INCUBATION,
+            )
+
+        elif operation == "read":
+            od = cultures[plate].measure(finished)
+
+            row = sim_db.execute(
+                """
+                SELECT reads
+                FROM samples
+                WHERE plate=?
+                """,
+                (plate,),
+            ).fetchone()
+
+            reads = row[0] + 1
+
+            sim_db.execute(
+                """
+                UPDATE samples
+                SET reads=?
+                WHERE plate=?
+                """,
+                (reads, plate),
+            )
+
+            sim_log.info(
+                "read %s OD=%.3f",
+                plate,
+                od,
+            )
+
+            if reads >= MAX_READS:
+                sim_db.execute(
+                    """
+                    UPDATE samples
+                    SET finished=1
+                    WHERE plate=?
+                    """,
+                    (plate,),
+                )
+
+            elif od >= THRESHOLD:
+                submit_job(
+                    "dilute",
+                    "liquid_handler",
+                    plate,
+                    priority=10,
+                )
+
+            else:
+                submit_job(
+                    "read",
+                    "reader",
+                    plate,
+                    not_before=finished + INCUBATION,
+                )
+
+        elif operation == "dilute":
+            cultures[plate].dilute(finished)
+
+            sim_db.execute(
+                """
+                UPDATE samples
+                SET dilutions=dilutions+1
+                WHERE plate=?
+                """,
+                (plate,),
+            )
+
+            submit_job(
+                "read",
+                "reader",
+                plate,
+                not_before=finished + INCUBATION,
+            )
+
+        sim_db.execute(
+            """
+            UPDATE jobs
+            SET status='complete'
+            WHERE id=?
+            """,
+            (job_id,),
+        )
+
+        sim_db.execute(
+            """
+            INSERT INTO executions
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                job_id,
+                operation,
+                resource,
+                plate,
+                started,
+                finished,
+            ),
+        )
+
+    sim_db.commit()
+```
+
+### Advance simulated time to the next event
+
+If nothing can start now, jump directly to the next interesting time:
+
+```{python}
+#| label: cell-platform-next-event
+def next_event_time():
+    times = []
+
+    row = sim_db.execute(
+        """
+        SELECT MIN(not_before)
+        FROM jobs
+        WHERE status='queued'
+          AND not_before > ?
+        """,
+        (sim_clock.now(),),
+    ).fetchone()
+
+    if row[0] is not None:
+        times.append(row[0])
+
+    row = sim_db.execute(
+        """
+        SELECT MIN(finished)
+        FROM jobs
+        WHERE status='running'
+          AND finished > ?
+        """,
+        (sim_clock.now(),),
+    ).fetchone()
+
+    if row[0] is not None:
+        times.append(row[0])
+
+    return min(times) if times else None
+```
+
+### Run the simulated platform
+
+```{python}
+#| label: cell-platform-run
+#| output: false
+while True:
+    finish_jobs()
+
+    unfinished = sim_db.execute(
+        """
+        SELECT COUNT(*)
+        FROM samples
+        WHERE finished=0
+        """
+    ).fetchone()[0]
+
+    if unfinished == 0:
+        break
+
+    ready = ready_jobs()
+
+    if ready:
+        for row in ready:
+            resource = row[2]
+
+            if resource_free_at[resource] <= sim_clock.now():
+                start_job(row)
+
+        continue
+
+    next_time = next_event_time()
+
+    if next_time is None:
+        raise RuntimeError("simulation stalled")
+
+    sim_clock.advance_to(next_time)
+```
+
+A process representing several hours of experimental time now executes without waiting several
+hours. Inspect the results:
+
+```{python}
+#| label: cell-platform-results
+for row in sim_db.execute(
+    """
+    SELECT plate, reads, dilutions, finished
+    FROM samples
+    ORDER BY plate
+    """
+):
+    print(row)
+```
+
+The exact result depends on the simulated growth rates and measurement noise, but is reproducible
+because the RNGs were seeded.
+
+### Test process invariants
+
+A platform test does not need to know every intermediate scheduler decision. It can test properties
+that should always remain true.
+
+Every sample finished:
+
+```{python}
+#| label: cell-platform-invariant-finished
+unfinished = sim_db.execute(
+    """
+    SELECT COUNT(*)
+    FROM samples
+    WHERE finished=0
+    """
+).fetchone()[0]
+
+assert unfinished == 0
+print("every sample finished")
+```
+
+Every plate was read the expected number of times:
+
+```{python}
+#| label: cell-platform-invariant-reads
+assert all(
+    reads == MAX_READS
+    for (reads,) in sim_db.execute(
+        "SELECT reads FROM samples"
+    )
+)
+print("every plate read exactly MAX_READS times")
+```
+
+A resource was never used by overlapping jobs:
+
+```{python}
+#| label: cell-platform-invariant-overlap
+for resource in ["reader", "liquid_handler"]:
+    intervals = sim_db.execute(
+        """
+        SELECT started, finished
+        FROM executions
+        WHERE resource=?
+        ORDER BY started
+        """,
+        (resource,),
+    ).fetchall()
+
+    for (_, end), (next_start, _) in zip(
+        intervals,
+        intervals[1:],
+    ):
+        assert end <= next_start
+print("no overlapping use of any resource")
+```
+
+No job ran before its scheduled time:
+
+```{python}
+#| label: cell-platform-invariant-timing
+violations = sim_db.execute(
+    """
+    SELECT COUNT(*)
+    FROM jobs
+    WHERE started < not_before
+    """
+).fetchone()[0]
+
+assert violations == 0
+print("no job ran before its not_before time")
+```
+
+Every completed scheduler job has an execution record:
+
+```{python}
+#| label: cell-platform-invariant-recorded
+completed = sim_db.execute(
+    """
+    SELECT COUNT(*)
+    FROM jobs
+    WHERE status='complete'
+    """
+).fetchone()[0]
+
+recorded = sim_db.execute(
+    "SELECT COUNT(*) FROM executions"
+).fetchone()[0]
+
+assert completed == recorded
+print("every completed job has an execution record")
+```
+
+The run produced its expected artifacts:
+
+```{python}
+#| label: cell-platform-invariant-artifacts
+assert (sim_run_dir / "manifest.json").exists()
+assert (sim_run_dir / "run.sqlite").exists()
+assert (sim_run_dir / "logs" / "process.log").exists()
+print("all run artifacts present")
+```
+
+More complicated simulations can inject faults:
+
+```python
+#| eval: false
+if rng.random() < 0.02:
+    raise RuntimeError("simulated reader fault")
+```
+
+vary operation times:
+
+```python
+#| eval: false
+duration = rng.uniform(50, 70)
+```
+
+or simulate machine unavailability:
+
+```python
+#| eval: false
+resource_free_at["reader"] += 600
+```
+
+The same invariants can then test whether the orchestration still behaves correctly.
+
+:::
+
+---
+
+## What to remember
+
+- Substitute time and measurements: a protocol that depends on a clock object and a seeded RNG can
+  run instantly and reproduce a failing test.
+- Seed the RNG (`random.Random(42)`) — stochastic, but deterministic.
+- The scheduler queue is ordinary persistent data: `priority`, `resource`, and `not_before` already
+  provide a useful small scheduling model, and the workers are interchangeable.
+- Simulate the platform, then test **invariants** — resource exclusivity, timing constraints,
+  completion, persistent output — rather than individual function results.

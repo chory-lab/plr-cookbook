@@ -147,7 +147,7 @@ await lh.drop_tips(tip_rack["A2"])
 ::: {.callout-warning title="Gotcha: `liquid_height` is distance from the bottom, not a z-coordinate"}
 
 2.0 means "2 mm above the well bottom", whatever the well's total depth. It is not an absolute z.
-If you meant "near the surface of a 100 µL column", compute that from the volume first — chapter 14
+If you meant "near the surface of a 100 µL column", compute that from the volume first — chapter 17
 covers the volume↔height math.
 :::
 
@@ -278,7 +278,7 @@ await lh.drop_tips(tip_rack["A4"])
 
 The narration shows the transfer volume, not the mix's internal cycles — a real backend performs
 them, but chatterbox prints the op it was given. Verify a mix with the machine or the run log
-([chapter 13](../part3/13_system_design.qmd)), not with the chatterbox output.
+([chapter 13](../part3/13_record_runs.qmd#logging)), not with the chatterbox output.
 
 **See also:** `surface_following_distance` tracks the liquid surface as it drops; pairing it with
 `liquid_height` from the speed/height recipe covers most cell-mixing use cases.

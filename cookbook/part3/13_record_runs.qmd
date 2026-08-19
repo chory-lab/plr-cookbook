@@ -1,0 +1,304 @@
+---
+title: "Log and organize runs"
+---
+
+Once a protocol grows beyond a single script, the question becomes *what did the run do*. This
+chapter covers recording that: logging at several levels, and organizing the files a run produces.
+
+## Setup {.unnumbered}
+
+```{python}
+#| label: cell-setup
+#| output: false
+import json, logging, tempfile
+from datetime import datetime
+from pathlib import Path
+
+from pylabrobot.liquid_handling import LiquidHandler
+from pylabrobot.liquid_handling.backends import LiquidHandlerChatterboxBackend
+from pylabrobot.resources import (
+    STARLetDeck, PLT_CAR_L5AC_A00, cor_96_wellplate_360uL_Fb,
+    TIP_CAR_288_C00, opentrons_96_filtertiprack_200ul,
+    set_volume_tracking, set_tip_tracking,
+)
+
+lh = LiquidHandler(backend=LiquidHandlerChatterboxBackend(), deck=STARLetDeck())
+await lh.setup()
+
+carrier = PLT_CAR_L5AC_A00(name="carrier")
+lh.deck.assign_child_resource(carrier, rails=10)
+carrier[0] = plate = cor_96_wellplate_360uL_Fb(name="plate")
+
+tips = TIP_CAR_288_C00(name="tip_carrier")
+lh.deck.assign_child_resource(tips, rails=2)
+tips[0] = rack = opentrons_96_filtertiprack_200ul(name="rack")
+
+set_volume_tracking(True)
+set_tip_tracking(True)
+plate["A1"][0].set_volume(1000)
+
+scratch = Path(tempfile.mkdtemp(prefix="cookbook_record_"))
+run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+print("scratch:", scratch)
+```
+
+---
+
+## Log at process, command, and firmware levels {#logging}
+
+::: {.recipe}
+
+A useful automation log often has three distinct levels:
+
+| Tier | Example logger | What it records |
+|---|---|---|
+| Process | `protocol` | steps, samples, run IDs, decisions |
+| Command | `pylabrobot` | PLR frontend calls and arguments |
+| Firmware / I/O | `pylabrobot.io.*` | messages exchanged with a physical device |
+
+PyLabRobot already logs frontend calls at `DEBUG`, while its I/O layer uses the lower
+`LOG_LEVEL_IO` level:
+
+```{python}
+#| label: cell-log-levels
+from pylabrobot.io import LOG_LEVEL_IO
+
+print("IO   =", LOG_LEVEL_IO, "->", logging.getLevelName(LOG_LEVEL_IO))   # <1>
+print("DEBUG=", logging.DEBUG)
+print("INFO =", logging.INFO)
+```
+
+1. `LOG_LEVEL_IO` is a **custom level below `DEBUG`**, registered under the name `IO`. Setting a
+   logger to `DEBUG` therefore excludes device traffic; you have to ask for level 5 to see it.
+
+A console can show only process-level information while a file records everything:
+
+```{python}
+#| label: cell-log-handlers
+#| output: false
+console = logging.StreamHandler()          # <1>
+console.setLevel(logging.INFO)
+
+run_log = logging.FileHandler(scratch / "run.log")   # <2>
+run_log.setLevel(LOG_LEVEL_IO)
+run_log.setFormatter(logging.Formatter(
+    "%(asctime)s %(name)-24s %(levelname)-5s %(message)s"
+))
+
+protocol_log = logging.getLogger("protocol")   # <3>
+protocol_log.setLevel(logging.INFO)
+if not any(isinstance(h, logging.Handler) for h in protocol_log.handlers):
+    protocol_log.addHandler(console)
+    protocol_log.addHandler(run_log)
+
+plr_log = logging.getLogger("pylabrobot")       # <4>
+plr_log.setLevel(LOG_LEVEL_IO)
+plr_log.addHandler(run_log)
+```
+
+1. Console handler: the process tier only, so an operator sees steps rather than device traffic.
+2. File handler: everything down to `IO`.
+3. Your own logger. Any name works; a package-style name lets you filter by prefix later.
+4. PLR's logger. It sets `propagate = False`, so its records reach only handlers attached to it —
+   attaching to the root logger does nothing.
+
+Then protocol code can add the high-level story while PLR records the individual commands
+underneath it:
+
+```{python}
+#| label: cell-log-run
+#| output: false
+protocol_log.info("run %s: reading plate %s", run_id, plate.name)
+
+await lh.pick_up_tips(rack["A4"])
+await lh.aspirate(plate["A1"], vols=[15])
+await lh.dispense(plate["D1"], vols=[15])
+await lh.return_tips()
+
+protocol_log.info("run %s: plate %s complete", run_id, plate.name)
+```
+
+The process and command tiers interleave in the file:
+
+```{python}
+#| label: cell-log-out
+for line in (scratch / "run.log").read_text().splitlines():
+    print(line[:104])
+```
+
+With physical hardware, the I/O logger can additionally capture the lower-level device traffic.
+
+Inside an exception handler, `logger.exception(...)` includes the current traceback and is
+therefore especially useful around protocol or machine-step boundaries:
+
+```{python}
+#| label: cell-log-exception
+async def failing_step():
+    raise RuntimeError("demo failure")
+
+try:
+    await failing_step()
+except Exception:
+    protocol_log.exception("plate run failed")
+```
+
+`logger.exception(msg)` attaches the current traceback, and only works inside an `except` block —
+called elsewhere it records `NoneType: None`.
+
+**See also:** `pylabrobot.verbose(True)` attaches a console handler to the `pylabrobot` logger, and
+`configure()` calls it automatically in a Jupyter kernel.
+
+:::
+
+---
+
+## Organize data by experiment and run {#run-data}
+
+::: {.recipe}
+
+Files answer a different question from database rows.
+
+A database is convenient for:
+
+```text
+Which sample is in B7?
+What was its last measured OD?
+Which wells belong to experiment 42?
+```
+
+The filesystem is convenient for:
+
+```text
+Where is the raw reader output?
+Which configuration produced this run?
+Where are its plots and logs?
+```
+
+A simple convention is one timestamped directory per run:
+
+```text
+experiments/
+└── camp_screen/
+    ├── experiment.json
+    │
+    ├── 20260816_121503_plate001/
+    │   ├── manifest.json
+    │   ├── samples.sqlite
+    │   ├── inputs/
+    │   ├── raw/
+    │   ├── derived/
+    │   ├── logs/
+    │   └── state/
+    │
+    └── 20260816_143822_plate002/
+        └── ...
+```
+
+Create one:
+
+```{python}
+#| label: cell-run-data
+run_dir = scratch / "camp_screen" / datetime.now().strftime("%Y%m%d_%H%M%S")   # <1>
+for subdir in ["inputs", "raw", "derived", "logs", "state"]:
+    (run_dir / subdir).mkdir(parents=True, exist_ok=True)   # <2>
+
+print(run_dir)
+print(sorted(p.name for p in run_dir.iterdir()))
+```
+
+1. A sortable timestamp plus something identifying, so directory listings order themselves.
+2. `mkdir(parents=True, exist_ok=True)` builds the whole chain in one call.
+
+Write a small manifest:
+
+```{python}
+#| label: cell-run-manifest
+manifest = {
+    "run_id": run_id,
+    "started": datetime.now().isoformat(),
+    "protocol": "camp_screen",
+    "plates": ["plate_1", "plate_2"],
+    "machines": ["liquid_handler", "reader"],
+}
+
+(run_dir / "manifest.json").write_text(
+    json.dumps(manifest, indent=2)
+)
+
+print(json.loads((run_dir / "manifest.json").read_text()))
+```
+
+A useful interpretation is:
+
+```text
+manifest.json
+    what this run is
+
+samples.sqlite
+    structured sample/process state
+
+inputs/
+    worklists, sample maps, requested parameters
+
+raw/
+    machine-produced data
+
+derived/
+    outputs that can be regenerated from raw data
+
+logs/
+    process and machine logs
+
+state/
+    deck or process checkpoints
+```
+
+For example, PLR state can be saved into `state/`:
+
+```{python}
+#| label: cell-run-state
+#| output: false
+lh.deck.save(str(run_dir / "state" / "layout.json"))                 # <1>
+lh.deck.save_state_to_file(str(run_dir / "state" / "deck_end.json"))
+```
+
+1. These two are PLR ([chapter 11](../part2/11_state.qmd#save-layout)): the layout says what was
+   on the deck, the state says what was in it. `save_state_to_file` mid-run is a checkpoint;
+   `load_state_from_file` resumes from it.
+
+Machine/site configuration used for a run can also be copied into the run directory, so an old run
+does not depend on whatever happens to be in today's configuration file:
+
+```{python}
+#| label: cell-run-config
+config = {
+    "liquid_handler": {"model": "STAR", "tips": "filter_1000"},
+    "reader": {"wavelength_nm": 600},
+}
+
+(run_dir / "config.json").write_text(json.dumps(config, indent=2))
+
+print(json.loads((run_dir / "config.json").read_text()))
+```
+
+PyLabRobot's own configuration is currently narrow and primarily concerned with logging; instrument
+addresses and other application-specific settings generally need to live in application
+configuration.
+
+**See also:** `pylabrobot.config` configures **logging only** — the details are in
+[chapter 12](../part2/12_hardware.qmd#backend-kwargs).
+
+:::
+
+---
+
+## What to remember
+
+- Log different kinds of information at different levels: **process decisions, PLR commands, and
+  device I/O**.
+- `LOG_LEVEL_IO` is a custom level below `DEBUG` — set a handler to it, not to `DEBUG`, to see
+  device traffic.
+- `logger.exception(...)` records the traceback, but only inside an `except` block.
+- One timestamped directory per run keeps metadata, raw data, derived outputs, logs, and state
+  together, so an old run does not depend on today's files.
+- PLR state saves into the run's `state/` subdirectory for checkpoints and resumption.

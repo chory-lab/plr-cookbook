@@ -45,7 +45,7 @@ comment where one belongs. Retrofitting is cheap; unpicking fifteen bespoke solu
 autoawait) — this is the single most common day-one blocker.
 
 **Callout (important):** `setup()` is not optional. PLR enforces it with `@need_setup_finished` on
-`aspirate`, `dispense`, `pick_up_tips`, `drop_tips`. Forward-reference ch. 13's decorator material.
+`aspirate`, `dispense`, `pick_up_tips`, `drop_tips`. Forward-reference ch. 15's decorator material.
 
 **Do not cover:** backends beyond chatterbox (ch. 12), deck construction detail (ch. 3).
 
@@ -85,7 +85,7 @@ that you are on a name scheduled for deletion.
 
 **Python sidebar:** `__setitem__` on carriers; mutable default arguments in deck-builder functions.
 
-**Do not cover:** anchors in depth (ch. 5), custom labware geometry (ch. 14).
+**Do not cover:** anchors in depth (ch. 5), custom labware geometry (ch. 17).
 
 ---
 
@@ -233,39 +233,72 @@ import.
 
 ---
 
-## Ch. 13 — Process and system design
+## Ch. 13 — Log and organize runs
 
-**Format:** seven independent microlessons, each a page or two. Not one long build.
+**Format:** two small, independent patterns. Not one long build. Each recipe is a page or two.
 
-| § | Microlesson | Key content |
-|---|---|---|
-| A | Steps and composition | Protocol as a list of steps; `@step`; checkpoint/resume; **`aspirate` is not idempotent**, so retry granularity matters |
-| B | **Recovery policy as composed decorators** — the centrepiece | Three failure tiers (transport / state / semantic) wanting three responses. Decorator order = handler precedence. Partial retry for `ChannelizedError`. Policy is reusable, plans are not |
-| C | Simulation | the honest limits of simulation (state, not physics) |
-| D | Logging and the run record | As a microlesson: two handlers, `_log_command` (called 25×), `%(relativeCreated)d`, `logger.exception()`, namespace filtering |
-| E | Testing without hardware | Four levels: pure functions → deck assertions → protocols vs chatterbox → **record/replay via `io.capture`** (`start_capture`, `validate`). Seed the RNG. **`SaverBackend` is gone in 0.2.2; no `pylabrobot.testing` package either** |
-| F | Data management | Run IDs, timestamped dirs, `pathlib`, provenance, snapshot/resume |
-| G | Configuration | `pylabrobot.config`: `load_config`, `get_config_file`, `Config` — device addresses out of protocol code |
+| Recipe | Anchor | APIs | Notes |
+|---|---|---|---|
+| Log at process, command, and firmware levels | `#logging` | `logging`, `LOG_LEVEL_IO` (level 5, below `DEBUG`), `protocol_log`, `pylabrobot` logger | The three-tier split; console at INFO, file at IO; `logger.exception` only inside `except` |
+| Organize data by experiment and run | `#run-data` | `pathlib`, `datetime`, `manifest.json`, `lh.deck.save`, `save_state_to_file` | One timestamped run dir: inputs/raw/derived/logs/state + manifest + config snapshot |
 
-**The decorator stack to build in §B** (this exact example, it is the chapter's spine):
-
-```python
-@retry(3, on=(SerialTimeout,), backoff=0.5)
-@recover(NoTipError, using=advance_to_next_tip_spot)
-@recover(TooLittleLiquidError, using=switch_to_backup_source)
-@recover(ChannelizedError, using=retry_failed_channels_only)
-@log_step("add master mix")
-async def add_master_mix(lh, plate, source): ...
-```
-
-**Must cover:** async decorators need `async def wrapper` + `await func(...)`; use `functools.wraps`.
-Read PLR's own `need_setup_finished` (`machines/machine.py`) as the worked example — it is exactly
-this shape and it is applied to `aspirate`, `dispense`, `pick_up_tips`, `drop_tips`, `Machine.stop`,
-and the plate reader methods.
+**Must cover:** `pylabrobot.config` configures **logging only**. PLR logs every frontend call at
+`DEBUG`; its `pylabrobot` logger sets `propagate = False`, so handlers must be attached to it, not
+the root.
 
 ---
 
-## Ch. 14 — Define custom labware: a PCR plate
+## Ch. 14 — Keep state in SQLite
+
+**Format:** two SQLite-backed patterns, one file each.
+
+| Recipe | Anchor | APIs | Notes |
+|---|---|---|---|
+| Track samples and plate maps in SQLite | `#sqlite` | `sqlite3`, `executemany`, `INSERT OR REPLACE`, `commit` | PK `(run_id, plate, well)`, one row per well per run; `?` placeholders, never f-strings |
+| Keep the scheduler queue in SQLite | `#scheduler` | `submit`, `next_job`, `claim`, `complete`, `fail`, `status`, `priority`, `not_before` | Queue survives the process; the worker loop is a separate concern (`eval: false`) |
+
+**Cross-ref:** ch. 16's platform builds its own `submit_job`/`finish_jobs` on the same shape.
+
+---
+
+## Ch. 15 — Compose behaviour with decorators
+
+**The centrepiece of Part III.** One recipe, three worked decorators.
+
+| Recipe | Anchor | APIs | Notes |
+|---|---|---|---|
+| Compose behaviour with decorators | `#recovery` | `functools.wraps`, async wrappers, `ChannelizedError.errors`, `get_mounted_tips`, `tip.tracker` | `handle_errors` → `with_fresh_tip`/`reuse_tip` → `with_reagent_refill` |
+
+**Must cover:** decorators apply **bottom-up**; retrying re-runs everything in the unit, and a step
+containing `aspirate`/`dispense` is not idempotent. Reads are retry-safe, mutations are not.
+`use_channels` must match `vols` length.
+
+**Decorator payoff (ties to ch. 18):** 13 backend methods each wrapping transport I/O is the ideal
+decorator target — `@need_setup_finished` (reuse PLR's own), `@retry` on transport, one
+`@log_command` wrapper.
+
+---
+
+## Ch. 16 — Simulate time and a platform
+
+**Format:** a short substitution pattern, then a guided build that combines it with everything in
+Part III. The capstone of the part.
+
+| Recipe | Anchor | APIs | Notes |
+|---|---|---|---|
+| Make simulated time and data explicit | `#simulation` | `SimClock`, `random.Random(seed)`, `simulated_od`, `math.exp` | Seed the RNG so a failing test reproduces |
+| Simulate a small automated platform | `#platform` | `SimClock`, SQLite scheduler, `resource_free_at`, invariant asserts | `#simulation`'s `SimClock` must precede it; the platform uses no `LiquidHandler` |
+
+**Must cover:** the platform section is the combining build — it should use the run-directory and
+logging discipline of ch. 13 and the persistent-queue idea of ch. 14, and its tests assert
+**invariants** (resource exclusivity, timing, completion, artifacts), not individual results.
+
+**No course material.** No exercises, no graded content — the platform is a finished, shown build
+the reader follows, like ch. 17–18.
+
+---
+
+## Ch. 17 — Define custom labware: a PCR plate
 
 **Format change:** guided vertical. One build, start to finish, in order.
 **Strictly hand-holding — every step given. No open exercises.**
@@ -305,12 +338,12 @@ extensible, **connectivity is not modelled at all** — volume trackers are per-
 independent, nothing propagates between connected wells. This is what generalises the chapter to
 microfluidics and flow cells without building one.
 
-**Decorator payoff (ties to ch. 13):** a `@labware_definition` registration decorator collecting
+**Decorator payoff (ties to ch. 15):** a `@labware_definition` registration decorator collecting
 factory functions into a local catalog, mirroring how PLR's own library is just functions.
 
 ---
 
-## Ch. 15 — Define a custom liquid handler
+## Ch. 18 — Define a custom liquid handler
 
 Guided vertical, same rules. **The most valuable chapter in the book for professional users.**
 
@@ -343,7 +376,7 @@ and homing **as its own section, flagged as not free**.
 fit so your backend is interoperable; raise `ChannelizedError` for partial multichannel failures;
 model a vendor family on `STARModuleError` (one abstract base, typed leaves).
 
-**Decorator payoff (ties to ch. 13):** 13 methods each wrapping transport I/O is the ideal decorator
+**Decorator payoff (ties to ch. 15):** 13 methods each wrapping transport I/O is the ideal decorator
 target. Inline that is 13 copies of retry, logging, and setup-checking; composed it is
 `@need_setup_finished` (reuse PLR's own), `@retry` on transport, one `@log_command` wrapper. Robust
 and flexible without verbosity, demonstrated on code the reader just wrote.
@@ -381,7 +414,7 @@ from pylabrobot.resources import (
 | `opentrons_24_aluminumblock_nest_1point5ml_snapcap` | `opentrons_24_aluminumblock_nest_1_5ml_snapcap` |
 | `opentrons_24_tuberack_eppendorf_2ml_safelock_snapcap_acrylic` | `opentrons_24_tuberack_eppendorf_2ml_safelock_snapcap` |
 | `nest_1_reservoir_195ml` | `nest_1_troughplate_195000uL_Vb` |
-| `nest_96_wellplate_100ul_pcr_full_skirt` | **no replacement — ch. 14 builds one** |
+| `nest_96_wellplate_100ul_pcr_full_skirt` | **no replacement — ch. 17 builds one** |
 | `pylabrobot.incubators` | `pylabrobot.storage` |
 | `Lid` in `resources/plate.py` | `resources/lid.py` (+ `Liddable` mixin) |
 | `set_well_liquids` | `set_well_volumes` (old one deprecated) |

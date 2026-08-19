@@ -341,7 +341,7 @@ resource's existing rotation. A plate that comes back at 270° indexes along its
 
 The backend receives this as three frozen dataclasses — `ResourcePickup`, `ResourceMove`, and
 `ResourceDrop`. `ResourceDrop` carries both directions plus the computed `rotation`, which is what a
-backend needs to command the arm ([chapter 15](../part4/15_custom_liquid_handler.qmd#abstract-members)).
+backend needs to command the arm ([chapter 18](../part4/18_custom_liquid_handler.qmd#abstract-members)).
 
 **See also:** the three phases are separately callable as `pick_up_resource`,
 `move_picked_up_resource`, and `drop_resource`. Picking up twice without dropping raises

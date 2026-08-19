@@ -302,118 +302,118 @@
   apis: "STARFirmwareError, STARModuleError, ClotDetectedError, star_firmware_string_to_error, TecanError, VantageFirmwareError"
 
 - title: "Compose behaviour with decorators"
-  path: part3/13_system_design.qmd#recovery
-  chapter: 13
+  path: part3/15_compose_behaviour.qmd#recovery
+  chapter: 15
   apis: "decorator order, functools.wraps, handle_errors, ChannelizedError.errors, partial retry, with_fresh_tip, reuse_tip, record_step, executions"
 
 - title: "Log at process, command, and firmware levels"
-  path: part3/13_system_design.qmd#logging
+  path: part3/13_record_runs.qmd#logging
   chapter: 13
   apis: "logging, LOG_LEVEL_IO, pylabrobot logger, logger.exception, propagate, FileHandler, StreamHandler"
 
 - title: "Organize data by experiment and run"
-  path: part3/13_system_design.qmd#run-data
+  path: part3/13_record_runs.qmd#run-data
   chapter: 13
   apis: "pathlib, datetime, run id, manifest.json, deck.save, save_state_to_file, provenance, config.json"
 
 - title: "Track samples and plate maps in SQLite"
-  path: part3/13_system_design.qmd#sqlite
-  chapter: 13
+  path: part3/14_state_in_sqlite.qmd#sqlite
+  chapter: 14
   apis: "sqlite3, connect, executemany, commit, PRIMARY KEY, datetime.isoformat, plate map, sample_events"
 
 - title: "Make simulated time and data explicit"
-  path: part3/13_system_design.qmd#simulation
-  chapter: 13
+  path: part3/16_simulated_platform.qmd#simulation
+  chapter: 16
   apis: "SimClock, simulated_od, random.Random, seeded RNG, synthetic data, math.exp, growth rate"
 
 - title: "Keep the scheduler queue in SQLite"
-  path: part3/13_system_design.qmd#scheduler
-  chapter: 13
+  path: part3/14_state_in_sqlite.qmd#scheduler
+  chapter: 14
   apis: "sqlite3, job queue, submit, next_job, claim, complete, fail, priority, resource, not_before, persistent queue"
 
 - title: "Simulate a small automated platform"
-  path: part3/13_system_design.qmd#platform
-  chapter: 13
+  path: part3/16_simulated_platform.qmd#platform
+  chapter: 16
   apis: "simulation, SimClock, SimCulture, scheduler, invariants, resource exclusivity, process logging, run directory"
 
 - title: "Measure a plate for a definition"
-  path: part4/14_custom_labware.qmd#measure
-  chapter: 14
+  path: part4/17_custom_labware.qmd#measure
+  chapter: 17
   apis: "size_x, size_y, size_z, item_dx, item_dy, dx, dy, dz, material_z_thickness, SBS footprint"
 
 - title: "Choose a labware base class"
-  path: part4/14_custom_labware.qmd#base-class
-  chapter: 14
+  path: part4/17_custom_labware.qmd#base-class
+  chapter: 17
   apis: "Resource, Container, ItemizedResource, Plate, ContainerRack, Liddable, _get_grid_size"
 
 - title: "Write volume and height functions"
-  path: part4/14_custom_labware.qmd#geometry
-  chapter: 14
+  path: part4/17_custom_labware.qmd#geometry
+  chapter: 17
   apis: "height_volume_functions, calculate_liquid_volume_container_2segments_round_vbottom, calculate_liquid_height_in_container_2segments_round_vbottom, compute_volume_from_height, compute_height_from_volume, height_volume_data, functools.partial"
 
 - title: "Lay out wells in a grid"
-  path: part4/14_custom_labware.qmd#layout
-  chapter: 14
+  path: part4/17_custom_labware.qmd#layout
+  chapter: 17
   apis: "create_ordered_items_2d, Well, WellBottomType, CrossSectionType, ordered_items"
 
 - title: "Wrap a definition in a factory function"
-  path: part4/14_custom_labware.qmd#factory
-  chapter: 14
+  path: part4/17_custom_labware.qmd#factory
+  chapter: 17
   apis: "Plate, plate_type, model, factory function, naming convention"
 
 - title: "Check a custom definition behaves like a plate"
-  path: part4/14_custom_labware.qmd#validate
-  chapter: 14
+  path: part4/17_custom_labware.qmd#validate
+  chapter: 17
   apis: "num_items_x, num_items_y, row, column, get_quadrant, ResourceDefinitionIncompleteError"
 
 - title: "Make a plate sit at the right height"
-  path: part4/14_custom_labware.qmd#height
-  chapter: 14
+  path: part4/17_custom_labware.qmd#height
+  chapter: 17
   apis: "PlateHolder, pedestal_size_z, PlateAdapter, compute_plate_location"
 
 - title: "Contribute a definition upstream"
-  path: part4/14_custom_labware.qmd#contribute
-  chapter: 14
+  path: part4/17_custom_labware.qmd#contribute
+  chapter: 17
   apis: "resources vendor package, __init__ exports, contributing-new-resources"
 
 - title: "Read the smallest complete backend"
-  path: part4/15_custom_liquid_handler.qmd#read-chatterbox
-  chapter: 15
+  path: part4/18_custom_liquid_handler.qmd#read-chatterbox
+  chapter: 18
   apis: "LiquidHandlerChatterboxBackend, backends/chatterbox.py"
 
 - title: "See what the backend interface demands"
-  path: part4/15_custom_liquid_handler.qmd#abstract-members
-  chapter: 15
+  path: part4/18_custom_liquid_handler.qmd#abstract-members
+  chapter: 18
   apis: "LiquidHandlerBackend, __abstractmethods__, abstractmethod, ABC, setup, stop, get_channel_spacings, request_tip_presence"
 
 - title: "Implement the core backend methods"
-  path: part4/15_custom_liquid_handler.qmd#core
-  chapter: 15
+  path: part4/18_custom_liquid_handler.qmd#core
+  chapter: 18
   apis: "num_channels, can_pick_up_tip, pick_up_tips, drop_tips, aspirate, dispense, Pickup, Drop, SingleChannelAspiration, SingleChannelDispense"
 
 - title: "Run a protocol through a custom backend"
-  path: part4/15_custom_liquid_handler.qmd#run
-  chapter: 15
+  path: part4/18_custom_liquid_handler.qmd#run
+  chapter: 18
   apis: "LiquidHandler, lh.head, set_volume_tracking, custom backend"
 
 - title: "Declare capabilities a backend lacks"
-  path: part4/15_custom_liquid_handler.qmd#refuse
-  chapter: 15
+  path: part4/18_custom_liquid_handler.qmd#refuse
+  chapter: 18
   apis: "NotImplementedError, head96_installed, pick_up_tips96, pick_up_resource, move_picked_up_resource, drop_resource"
 
 - title: "Talk to a real device over pylabrobot.io"
-  path: part4/15_custom_liquid_handler.qmd#io
-  chapter: 15
+  path: part4/18_custom_liquid_handler.qmd#io
+  chapter: 18
   apis: "pylabrobot.io, Serial, USB, HID, FTDI, Socket, LOG_LEVEL_IO, capturer.record"
 
 - title: "Map deck coordinates to machine coordinates"
-  path: part4/15_custom_liquid_handler.qmd#coordinates
-  chapter: 15
+  path: part4/18_custom_liquid_handler.qmd#coordinates
+  chapter: 18
   apis: "get_absolute_location, Coordinate, homing, Deck subclass, assign_child_at_slot"
 
 - title: "Define a custom deck"
-  path: part4/15_custom_liquid_handler.qmd#deck
-  chapter: 15
+  path: part4/18_custom_liquid_handler.qmd#deck
+  chapter: 18
   apis: "Deck, ResourceHolder, assign_child_at_slot, OTDeck, STARLetDeck, get_slot, Coordinate"
 
 - title: "Stream, pair, and batch a plan"

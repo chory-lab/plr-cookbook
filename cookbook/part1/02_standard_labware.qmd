@@ -67,7 +67,7 @@ print("instance:", plate.name, "/", trough.name)       # <2>
 - **type** — `wellplate`, `troughplate`, `filtertiprack`, `tuberack`, `plateadapter`, ...
 - **volume** — the well capacity in µL. `360uL`, `195000uL` (yes, that is 195 mL — a reservoir).
 - **bottom** — the well-bottom shape: `Fb` (flat), `Vb` (V-shaped), `U`/`Ub`. This is not cosmetic;
-  it drives the volume↔height math (chapter 14).
+  it drives the volume↔height math (chapter 17).
 
 ::: {.callout-important title="The library is mid-rename — old names still import"}
 
@@ -114,7 +114,7 @@ print(cor_96_wellplate_360uL_Fb.__doc__.splitlines()[0])   # <1>
 - **Grep the source** for the catalog number — it may be defined under a slightly different name.
 - **Use the closest definition** and note the difference in a comment. Nobody measures a well to
   the micron.
-- **Define it yourself** — [chapter 14](../part4/14_custom_labware.qmd). 0.2.2 ships no PCR plate,
+- **Define it yourself** — [chapter 17](../part4/17_custom_labware.qmd). 0.2.2 ships no PCR plate,
   so that chapter builds one.
 
 **See also:** the vendor package list is `pylabrobot.resources.*` — 26 packages including the new-in-0.2.2

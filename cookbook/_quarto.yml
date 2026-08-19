@@ -47,12 +47,15 @@ book:
 
     - part: "Part III — Building systems"
       chapters:
-        - part3/13_system_design.qmd
+        - part3/13_record_runs.qmd
+        - part3/14_state_in_sqlite.qmd
+        - part3/15_compose_behaviour.qmd
+        - part3/16_simulated_platform.qmd
 
     - part: "Part IV — Extending PyLabRobot"
       chapters:
-        - part4/14_custom_labware.qmd
-        - part4/15_custom_liquid_handler.qmd
+        - part4/17_custom_labware.qmd
+        - part4/18_custom_liquid_handler.qmd
 
     - CHEATSHEET.qmd
     - live.qmd

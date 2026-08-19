@@ -77,7 +77,7 @@ confused. Carriers are the interface for labware; the deck is the interface for 
 :::
 
 **See also:** carriers hold plates and tip racks; `PlateHolder.pedestal_size_z` controls how high a
-plate sits and is [required in 0.2.2](../part4/14_custom_labware.qmd) — omit it and PLR raises.
+plate sits and is [required in 0.2.2](../part4/17_custom_labware.qmd) — omit it and PLR raises.
 
 :::
 

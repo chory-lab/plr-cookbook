@@ -1,0 +1,318 @@
+---
+title: "Compose behaviour with decorators"
+---
+
+The same behaviour repeatedly surrounds protocol functions: error handling, tip acquisition, and
+tip-volume control. This chapter wraps those concerns in decorators so the protocol body contains
+only the transfer itself.
+
+## Setup {.unnumbered}
+
+```{python}
+#| label: cell-setup
+#| output: false
+import functools, logging, tempfile
+from pathlib import Path
+
+from pylabrobot.liquid_handling import LiquidHandler
+from pylabrobot.liquid_handling.backends import LiquidHandlerChatterboxBackend
+from pylabrobot.liquid_handling.errors import ChannelizedError
+from pylabrobot.resources import (
+    STARLetDeck, PLT_CAR_L5AC_A00, cor_96_wellplate_360uL_Fb,
+    nest_1_troughplate_195000uL_Vb,
+    TIP_CAR_288_C00, opentrons_96_filtertiprack_200ul,
+    set_volume_tracking, set_tip_tracking,
+)
+from pylabrobot.resources.errors import NoTipError, TooLittleLiquidError
+
+lh = LiquidHandler(backend=LiquidHandlerChatterboxBackend(), deck=STARLetDeck())
+await lh.setup()
+
+carrier = PLT_CAR_L5AC_A00(name="carrier")
+lh.deck.assign_child_resource(carrier, rails=10)
+carrier[0] = plate = cor_96_wellplate_360uL_Fb(name="plate")
+carrier[1] = trough = nest_1_troughplate_195000uL_Vb(name="buffer")
+
+tips = TIP_CAR_288_C00(name="tip_carrier")
+lh.deck.assign_child_resource(tips, rails=2)
+tips[0] = rack = opentrons_96_filtertiprack_200ul(name="rack")
+
+set_volume_tracking(True)
+set_tip_tracking(True)
+plate["A1"][0].set_volume(1000)
+trough["A1"][0].set_volume(10000)
+
+scratch = Path(tempfile.mkdtemp(prefix="cookbook_compose_"))
+
+protocol_log = logging.getLogger("protocol")      # <1>
+protocol_log.setLevel(logging.INFO)
+if not any(isinstance(h, logging.Handler) for h in protocol_log.handlers):
+    run_log = logging.FileHandler(scratch / "run.log")
+    run_log.setFormatter(logging.Formatter(
+        "%(asctime)s %(name)-24s %(levelname)-5s %(message)s"
+    ))
+    protocol_log.addHandler(run_log)
+print("scratch:", scratch)
+```
+
+1. The [logging chapter](13_record_runs.qmd#logging) explains the handler split; here one file
+   handler is enough, and the last recipe reads it back.
+
+---
+
+## Compose behaviour with decorators {#recovery}
+
+::: {.recipe}
+
+Decorators are useful when the same behaviour needs to surround many protocol functions. Three
+common laboratory examples are error handling, tip handling, and tip-volume control.
+
+Two mechanics are worth stating before the patterns are written:
+
+- Decorators apply **bottom-up**: `@a` over `@b` over `def f` is `f = a(b(f))`. An exception raised
+  in the body travels outward through `b` first, so the outermost decorator gets the last word, and
+  reordering the stack changes which handler acts first.
+- Retrying re-runs **everything** in the retried unit. `aspirate` and `dispense` change deck state,
+  so a step containing them is not idempotent; reads such as `summary()` and `get_resource()` are.
+
+### Centralize try/except behaviour
+
+Suppose several liquid-handling steps should log failures consistently:
+
+```{python}
+#| label: cell-decorator-errors
+def handle_errors(fn):
+    @functools.wraps(fn)
+    async def wrapper(*args, **kwargs):
+        try:
+            return await fn(*args, **kwargs)
+        except Exception:
+            protocol_log.exception(
+                "%s failed", fn.__name__
+            )
+            raise
+    return wrapper
+```
+
+Use it normally:
+
+```{python}
+#| label: cell-decorator-errors-use
+#| output: false
+@handle_errors
+async def transfer_sample(lh, source, dest):
+    await lh.aspirate(source, vols=[50])
+    await lh.dispense(dest, vols=[50])
+
+await lh.pick_up_tips(rack["A6"])
+await transfer_sample(lh, plate["A1"], plate["B1"])
+await lh.return_tips()
+print("transfer_sample ran cleanly")
+```
+
+More specific handlers can inspect errors that contain partial completion information. PLR's
+`ChannelizedError` records errors by channel:
+
+```{python}
+#| label: cell-decorator-channelized
+error = ChannelizedError(
+    errors={2: NoTipError("no tip"), 5: TooLittleLiquidError("empty")}
+)
+
+failed_channels = sorted(error.errors)
+print("failed channels:  ", failed_channels)
+print("blind retry re-runs:", list(range(8)))
+print("re-run only:       ", failed_channels)
+```
+
+This matters because blindly repeating the entire transfer can repeat channels that already
+succeeded: a retry of an eight-channel operation with failures on channels 2 and 5 would rerun the
+six successful channels too. The appropriate recovery depends on the operation, but the wrapper is
+a useful place to keep common exception policy out of the protocol body
+([chapter 10](../part2/10_errors.qmd#partial-failure)).
+
+### Wrap tip management
+
+Tip acquisition and cleanup often surround otherwise simple liquid-handling functions:
+
+```{python}
+#| label: cell-decorator-tip
+def with_fresh_tip(fn):
+    @functools.wraps(fn)
+    async def wrapper(lh, tip, *args, **kwargs):
+        await lh.pick_up_tips(tip)
+        try:
+            return await fn(lh, *args, **kwargs)
+        finally:
+            await lh.discard_tips()
+    return wrapper
+```
+
+Then the liquid-transfer function only contains the transfer:
+
+```{python}
+#| label: cell-decorator-tip-use
+#| output: false
+@with_fresh_tip
+async def move_sample(lh, source, dest, volume):
+    await lh.aspirate(source, vols=[volume])
+    await lh.dispense(dest, vols=[volume])
+
+await move_sample(
+    lh,
+    rack["A7"],
+    plate["A1"],
+    plate["B1"],
+    50,
+)
+print("moved 50 uL on a fresh tip, tip discarded")
+```
+
+A different wrapper can express a different tip policy. For example, reuse within one group:
+
+```{python}
+#| label: cell-decorator-tip-reuse
+#| output: false
+def reuse_tip(fn):
+    @functools.wraps(fn)
+    async def wrapper(lh, tip, transfers):
+        await lh.pick_up_tips(tip)
+        try:
+            for transfer in transfers:
+                await fn(lh, *transfer)
+        finally:
+            await lh.return_tips()
+    return wrapper
+
+@reuse_tip
+async def move_sample(lh, source, dest, volume):
+    await lh.aspirate(source, vols=[volume])
+    await lh.dispense(dest, vols=[volume])
+
+await move_sample(
+    lh,
+    rack["A8"],
+    [
+        (plate["A1"], plate["C1"], 20),
+        (plate["B1"], plate["D1"], 20),
+    ],
+)
+print("two transfers on one reused tip, tip returned")
+```
+
+The point is simply that the transfer logic (`aspirate`, `dispense`, `mix`) does not have to repeat
+the same pick-up / cleanup / return-or-discard logic everywhere.
+
+### Control tip volume when plating from a trough
+
+A single aspirate limits how much can be dispensed to whatever fits in the tips. When plating a
+reagent from a trough into many wells, the tips can instead be tracked and topped back up from the
+trough whenever the tracked volume runs low, so one set of tips covers the whole plate:
+
+```{python}
+#| label: cell-decorator-volume
+def with_reagent_refill(source, capacity):
+    def decorator(fn):
+        @functools.wraps(fn)
+        async def wrapper(lh, volume, *args, **kwargs):
+            mounted = [
+                (i, tip)
+                for i, tip in enumerate(lh.get_mounted_tips())      # <1>
+                if tip is not None
+            ]
+
+            if not mounted:                                          # <2>
+                raise RuntimeError("no tips mounted")
+
+            refill = [
+                (channel, capacity - tip.tracker.get_used_volume())
+                for channel, tip in mounted
+                if tip.tracker.get_used_volume() < volume            # <3>
+            ]
+
+            if refill:
+                channels = [channel for channel, _ in refill]
+                top_ups = [amount for _, amount in refill]
+
+                protocol_log.info(
+                    "re-aspirating reagent from %s on channels %s",
+                    source.parent.name,
+                    channels,
+                )
+
+                await lh.aspirate(
+                    [source] * len(channels),
+                    vols=top_ups,
+                    use_channels=channels,                            # <4>
+                )
+
+            return await fn(lh, volume, *args, **kwargs)
+
+        return wrapper
+    return decorator
+```
+
+1. `get_mounted_tips()` reports the tips in channel order. `enumerate` keeps the channel index
+   attached to each tip, so a refill can address the exact channels that own tips rather than
+   assuming the contiguous block 0–7. It relies on tip tracking, enabled in Setup.
+2. A volume check is meaningless with no tips on the head, so fail loudly instead of passing
+   silently.
+3. Each tip's tracker records the liquid in it: `aspirate` adds, `dispense` subtracts. The per-tip
+   volumes need not be equal, so instead of taking a `min()` over all tips, only tips whose tracked
+   volume is below what the next call needs are refilled — each back up to `capacity`. A tip
+   carrying more than the others is left alone.
+4. `use_channels` selects exactly the refilled channels. Repeating the single trough well once per
+   channel is the single-resource idiom from [chapter 4](../part1/04_pipetting.qmd#spread), and
+   `vols` must match `use_channels`.
+
+Then a plating function contains only the dispense:
+
+```{python}
+#| label: cell-decorator-volume-use
+#| output: false
+trough_well = trough["A1"][0]
+carrier[2] = dest = cor_96_wellplate_360uL_Fb(name="dest")   # a fresh plate
+
+@with_reagent_refill(trough_well, capacity=200)
+async def plate_column(lh, volume, dest_column):
+    await lh.dispense(dest_column, vols=[volume] * 8)
+
+await lh.pick_up_tips(rack["A1:H1"])
+for column in range(12):
+    await plate_column(lh, 60, dest.column(column))
+remaining = [round(t.tracker.get_used_volume(), 1)
+             for t in lh.get_mounted_tips()]
+await lh.discard_tips()
+```
+
+200 µL tips dispensing 60 µL per column can plate three columns before the tracked volume runs low,
+so the trough is re-aspirated on columns 1, 4, 7, and 10 — the tips never run dry, and one tip set
+covers the whole plate. Each refill is a process-tier log record (the
+[logging recipe](13_record_runs.qmd#logging)), so the decision history survives:
+
+```{python}
+#| label: cell-decorator-volume-log
+for line in (scratch / "run.log").read_text().splitlines():
+    if "re-aspirating" in line:
+        print(line)
+print("leftover per tip:", remaining)
+```
+
+With real hardware the source trough must hold enough reagent for the sum of all refills; the
+wrapper only decides *when* to go back to the trough, it does not check the trough's own tracked
+volume.
+
+:::
+
+---
+
+## What to remember
+
+- Decorators apply **bottom-up**: the outermost decorator handles first, and reordering the stack
+  changes which handler acts first.
+- A retry re-runs everything in its unit — so a step containing `aspirate`/`dispense` is not safe
+  to retry blindly. Reads are; mutations are not.
+- Separate tip lifecycle (pick up, discard or return) from the scientific operation, and centralize
+  exception policy in a wrapper instead of in each protocol body.
+- Track the liquid in the tips and top up from a trough with `use_channels` targeting exactly the
+  channels that need it.

@@ -459,7 +459,7 @@ print("filter:         ", tip.has_filter)
 1. `get_tip(identifier)` returns the `Tip` object; `get_tips(...)` and `get_all_tips()` take several.
 2. `maximal_volume` is the physical capacity; `nominal_volume` is what the tip is sold as. The
    backend's `can_pick_up_tip` compares against these
-   ([chapter 15](../part4/15_custom_liquid_handler.qmd#core)).
+   ([chapter 18](../part4/18_custom_liquid_handler.qmd#core)).
 3. `fitting_depth` is how far the tip goes onto the channel, which is why a tip is not just a
    volume.
 
@@ -469,7 +469,7 @@ Vendor subclasses add what their firmware needs. `HamiltonTip` takes a `TipSize`
 tip-type command.
 
 **See also:** a `TipSpot` builds its tip on demand through `make_tip()`, which is how a rack
-definition specifies what it holds ([chapter 14](../part4/14_custom_labware.qmd#layout)).
+definition specifies what it holds ([chapter 17](../part4/17_custom_labware.qmd#layout)).
 
 :::
 

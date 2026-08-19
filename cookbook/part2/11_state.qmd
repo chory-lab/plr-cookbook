@@ -215,7 +215,7 @@ except ValueError as e:
 
 ::: {.callout-warning title="Gotcha: import your own classes before loading"}
 
-For labware you define yourself ([chapter 14](../part4/14_custom_labware.qmd)), the class must be
+For labware you define yourself ([chapter 17](../part4/17_custom_labware.qmd)), the class must be
 imported into the loading process **before** `load_from_json_file` runs, even though the file names
 it. The import is what registers it.
 

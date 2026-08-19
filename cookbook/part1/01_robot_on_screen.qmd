@@ -156,7 +156,7 @@ await vis.stop()                                      # <3>
 
 **See also:** `ws_port` (2121) and `fs_port` (1337) are constructor arguments to `Visualizer`, not
 settings — `pylabrobot.config` configures logging only
-([chapter 13](../part3/13_system_design.qmd#logging)).
+([chapter 13](../part3/13_record_runs.qmd#logging)).
 
 :::
 
@@ -263,7 +263,7 @@ PLR enforces it itself. `aspirate`, `dispense`, `pick_up_tips`, and `drop_tips` 
 RuntimeError: The setup has not finished. See `setup`.
 ```
 
-[Chapter 13](../part3/13_system_design.qmd) composes recovery policy out of the same idea.
+[Chapter 15](../part3/15_compose_behaviour.qmd) composes recovery policy out of the same idea.
 :::
 
 **See also:** against the chatterbox, omitting `stop()` has no effect. Against hardware it can

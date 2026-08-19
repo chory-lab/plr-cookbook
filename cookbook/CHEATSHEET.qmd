@@ -256,7 +256,7 @@ table(LiquidHandler, [
 
 `Strictness.WARN` is the default; `STRICT` raises on extra kwargs — but **not** against a backend
 declaring `**kwargs`, which the chatterbox does.
-[Chapter 12](part2/12_hardware.qmd#kwargs-validation), [chapter 15](part4/15_custom_liquid_handler.qmd).
+[Chapter 12](part2/12_hardware.qmd#kwargs-validation), [chapter 18](part4/18_custom_liquid_handler.qmd).
 
 ## Defining labware
 
@@ -277,7 +277,7 @@ print()
 
 Bind geometry with a **wrapper function**, not `functools.partial` — PLR calls the callable
 positionally. `PlateHolder.pedestal_size_z` is required.
-[Chapter 14](part4/14_custom_labware.qmd#geometry).
+[Chapter 17](part4/17_custom_labware.qmd#geometry).
 
 ## System
 
@@ -297,7 +297,7 @@ table(C, [
 Captures record from the io transport layer only — **nothing from a chatterbox**.
 `pylabrobot.config` configures **logging only**. PLR logs every call at `DEBUG` to the
 `pylabrobot` logger, which does not propagate.
-[Chapter 13](part3/13_system_design.qmd#logging).
+[Chapter 13](part3/13_record_runs.qmd#logging).
 
 ---
 
