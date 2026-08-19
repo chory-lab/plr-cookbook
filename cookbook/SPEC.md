@@ -267,10 +267,13 @@ the root.
 
 | Recipe | Anchor | APIs | Notes |
 |---|---|---|---|
-| Compose behaviour with decorators | `#recovery` | `functools.wraps`, async wrappers, `ChannelizedError.errors`, `get_mounted_tips`, `tip.tracker` | `handle_errors` → `with_fresh_tip`/`reuse_tip` → `with_reagent_refill` |
+| Compose behaviour with decorators | `#recovery` | `functools.wraps`, async wrappers, `ChannelizedError.errors`, `get_mounted_tips`, `tip.tracker` | `handle_errors` → `with_fresh_tip`/`reuse_tip` → `with_reagent_refill` → `try_next_tip`/`try_next_source` |
 
 **Must cover:** decorators apply **bottom-up**; retrying re-runs everything in the unit, and a step
-containing `aspirate`/`dispense` is not idempotent. Reads are retry-safe, mutations are not.
+containing `aspirate`/`dispense` is not idempotent. Reads are retry-safe, mutations are not. The
+candidate-substitution wrappers (`try_next_tip` on `NoTipError`, `try_next_source` on
+`TooLittleLiquidError`) are safe only because those errors raise *before* anything is moved;
+`HasTipError` (channel already occupied) must not be handled by advancing.
 `use_channels` must match `vols` length.
 
 **Decorator payoff (ties to ch. 18):** 13 backend methods each wrapping transport I/O is the ideal

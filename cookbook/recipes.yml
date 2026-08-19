@@ -304,7 +304,7 @@
 - title: "Compose behaviour with decorators"
   path: part3/15_compose_behaviour.qmd#recovery
   chapter: 15
-  apis: "decorator order, functools.wraps, handle_errors, ChannelizedError.errors, partial retry, with_fresh_tip, reuse_tip, record_step, executions"
+  apis: "decorator order, functools.wraps, handle_errors, ChannelizedError.errors, partial retry, with_fresh_tip, reuse_tip, try_next_tip, try_next_source, NoTipError, TooLittleLiquidError, record_step, executions"
 
 - title: "Log at process, command, and firmware levels"
   path: part3/13_record_runs.qmd#logging
