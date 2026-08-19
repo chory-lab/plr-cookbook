@@ -279,7 +279,7 @@ decorator target — `@need_setup_finished` (reuse PLR's own), `@retry` on trans
 
 ---
 
-## Ch. 16 — Simulate time and a platform
+## Ch. 16 — Simulating an Orchestrated Platform
 
 **Format:** a short substitution pattern, then a guided build that combines it with everything in
 Part III. The capstone of the part.

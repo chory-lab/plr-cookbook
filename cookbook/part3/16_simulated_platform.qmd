@@ -1,5 +1,5 @@
 ---
-title: "Simulate time and a platform"
+title: "Simulating an Orchestrated Platform"
 ---
 
 Long waits and physical measurements are two reasons laboratory code is difficult to test quickly.
