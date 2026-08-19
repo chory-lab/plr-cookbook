@@ -304,7 +304,7 @@
 - title: "Compose behaviour with decorators"
   path: part3/15_compose_behaviour.qmd#recovery
   chapter: 15
-  apis: "decorator order, functools.wraps, handle_errors, ChannelizedError.errors, partial retry, with_fresh_tip, reuse_tip, record_step, executions"
+  apis: "decorator order, functools.wraps, handle_errors, ChannelizedError.errors, partial retry, with_fresh_tip, reuse_tip, try_next_tip, try_next_source, NoTipError, TooLittleLiquidError, record_step, executions"
 
 - title: "Log at process, command, and firmware levels"
   path: part3/13_record_runs.qmd#logging
@@ -324,17 +324,17 @@
 - title: "Make simulated time and data explicit"
   path: part3/16_simulated_platform.qmd#simulation
   chapter: 16
-  apis: "SimClock, simulated_od, random.Random, seeded RNG, synthetic data, math.exp, growth rate"
+  apis: "SimClock, quantify, random.Random, seeded RNG, synthetic data, measurement noise, reproducible draws"
 
 - title: "Keep the scheduler queue in SQLite"
   path: part3/14_state_in_sqlite.qmd#scheduler
   chapter: 14
   apis: "sqlite3, job queue, submit, next_job, claim, complete, fail, priority, resource, not_before, persistent queue"
 
-- title: "Simulate a small automated platform"
+- title: "Simulate a normalization cell"
   path: part3/16_simulated_platform.qmd#platform
   chapter: 16
-  apis: "simulation, SimClock, SimCulture, scheduler, invariants, resource exclusivity, process logging, run directory"
+  apis: "simulation, SimClock, ResourceStack, get_top_item, move_plate, use_channels, volume tracking, invariants, queue discipline, LCFS, process logging, run directory"
 
 - title: "Measure a plate for a definition"
   path: part4/17_custom_labware.qmd#measure

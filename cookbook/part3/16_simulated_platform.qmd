@@ -3,18 +3,29 @@ title: "Simulating an Orchestrated Platform"
 ---
 
 Long waits and physical measurements are two reasons laboratory code is difficult to test quickly.
-This chapter substitutes simulated time and stochastic measurements, then combines them into a
-simulated multi-instrument platform that tests process invariants — resource exclusivity, timing,
-completion — without hardware or wall-clock waiting.
+This chapter substitutes simulated time and stochastic measurements, then combines them with the
+run directory of [chapter 13](13_record_runs.qmd), the SQLite tables of
+[chapter 14](14_state_in_sqlite.qmd), and the wrappers of
+[chapter 15](15_compose_behaviour.qmd) into a single simulated unit operation: a normalization cell
+fed by a plate stacker.
 
 ## Setup {.unnumbered}
 
 ```{python}
 #| label: cell-setup
 #| output: false
-import json, logging, math, random, sqlite3, tempfile
+import json, logging, random, sqlite3, tempfile
 from datetime import datetime
 from pathlib import Path
+
+from pylabrobot.liquid_handling import LiquidHandler
+from pylabrobot.liquid_handling.backends import LiquidHandlerChatterboxBackend
+from pylabrobot.resources import (
+    STARLetDeck, PLT_CAR_L5AC_A00, cor_96_wellplate_360uL_Fb,
+    nest_1_troughplate_195000uL_Vb, TIP_CAR_288_C00,
+    opentrons_96_filtertiprack_200ul, ResourceStack, Coordinate,
+    set_volume_tracking, set_tip_tracking,
+)
 
 scratch = Path(tempfile.mkdtemp(prefix="cookbook_platform_"))
 print("scratch:", scratch)
@@ -45,95 +56,41 @@ class SimClock:
 ```
 
 Instead of asking the operating system what time it is — `now = clock.now()` — and instead of
-actually waiting thirty minutes — `clock.advance(30 * 60)` — the protocol depends on the clock
-object, so either version can be substituted.
+actually waiting five minutes — `clock.advance(300)` — the protocol depends on the clock object, so
+either version can be substituted.
 
-The same idea applies to measurements. A simple stochastic OD model:
+The same idea applies to measurements. Every quantification carries error, so a simulated reading is
+a true value plus noise:
 
 ```{python}
-#| label: cell-simod
+#| label: cell-simread
 rng = random.Random(42)          # <1>
 
-def simulated_od(
-    initial_od,
-    growth_rate,
-    elapsed,
-    noise=0.02,
-):
-    true_od = initial_od * math.exp(
-        growth_rate * elapsed
+def quantify(true_conc, cv=0.03):
+    return true_conc * (
+        1 + rng.gauss(0, cv)
     )
-    return true_od + rng.gauss(0, noise)
 ```
 
 1. Seeding the random-number generator gives the simulation stochastic behaviour while keeping a
    failing test reproducible.
 
-For example:
+For example, quantifying the same sample four times:
 
 ```{python}
-#| label: cell-simod-run
-clock = SimClock()
-
+#| label: cell-simread-run
 for _ in range(4):
-    clock.advance(30 * 60)
-
-    od = simulated_od(
-        initial_od=0.1,
-        growth_rate=0.0004,
-        elapsed=clock.now(),
-    )
-
-    print(clock.now(), round(od, 3))
+    print(round(quantify(48.0), 2))
 ```
 
-Each culture can also have its own growth rate:
+Re-seeding reproduces the identical sequence, which is what makes an assertion about simulated data
+worth writing at all:
 
 ```{python}
-#| label: cell-simod-cultures
-cultures = {
-    "plate_1": rng.gauss(0.00040, 0.00002),
-    "plate_2": rng.gauss(0.00040, 0.00002),
-    "plate_3": rng.gauss(0.00040, 0.00002),
-}
-print({k: round(v, 6) for k, v in cultures.items()})
+#| label: cell-simread-repeat
+rng = random.Random(42)
+print([round(quantify(48.0), 2) for _ in range(4)])
 ```
-
-A small object can keep the biological state together:
-
-```{python}
-#| label: cell-culture
-class Culture:
-    def __init__(self, od, rate, seed):
-        self.od = od
-        self.rate = rate
-        self.rng = random.Random(seed)
-
-    def grow(self, seconds):
-        self.od *= math.exp(self.rate * seconds)
-
-    def measure(self):
-        return self.od + self.rng.gauss(0, 0.02)
-
-    def dilute(self, factor):
-        self.od /= factor
-```
-
-Then:
-
-```{python}
-#| label: cell-culture-run
-culture = Culture(od=0.1, rate=0.0004, seed=1)
-culture.grow(1800)
-od = culture.measure()
-
-if od > 0.8:
-    culture.dilute(4)
-
-print("od after 30 min:", round(od, 3))
-```
-
-Nothing about that test requires actual wall-clock waiting or a plate reader.
 
 **See also:** `pylabrobot.io.capture` in [chapter 12](../part2/12_hardware.qmd) records real device
 I/O for replay, which is the hardware-level counterpart to this.
@@ -142,660 +99,495 @@ I/O for replay, which is the hardware-level counterpart to this.
 
 ---
 
-## Simulate a small automated platform {#platform}
+## Simulate a normalization cell {#platform}
 
 ::: {.recipe}
 
-The previous pieces can now be combined into a larger test.
+The pieces can now be combined into one unit operation of the kind that sits in a real pipeline.
 
-Consider a platform with:
-
-```text
-1 liquid handler
-1 plate reader
-4 cultures
-```
-
-Each culture follows:
+Plates of extracted DNA arrive from upstream at times nobody controls. Each well has a known
+concentration, measured before the plate got here and supplied with it. The cell dilutes every well
+to a target concentration with buffer, then sets the plate down on the output side.
 
 ```text
-prepare
-   ↓
-incubate
-   ↓
-read OD
-   ↓
-OD >= threshold?
-   ├── no  → incubate → read again
-   │
-   └── yes → dilute → incubate → read again
+arrivals ──► input stacker ──► liquid handler ──► output stacker
+             (plate hotel)      (dilute to target)
 ```
 
-We will use a timestamped run directory, SQLite plate/sample tables, SQLite scheduler jobs,
-process logging, a simulated clock, stochastic cultures, simulated instruments, and invariant
-tests.
+Three pieces of the platform are in that diagram, and only one of them pipettes. The arrival stream
+stands in for whatever runs upstream — an extraction cell, a quantification step, an operator with a
+trolley — reduced to the two things this cell needs from it: when a plate shows up, and what is in
+it. The stackers are the interface to the rest of the platform on either side, and as the last
+section shows, the input stacker decides more about how this cell behaves than any of the code does.
 
-### Create the simulated run
+What none of it needs is a scheduler. The decisions here are per-well arithmetic, and the plate that
+runs next is whichever one the gripper can reach. What the cell does need is somewhere to record
+what happened, and a way to run several hours of arrivals in a fraction of a second.
+
+### Build the cell
+
+The STAR's iSWAP moves the plates, so transport and pipetting contend for one instrument: the arm
+cannot fetch the next plate while the head is dispensing. Everything else in the cell — carrier,
+trough, tips, both stackers — is passive labware with no backend behind it.
 
 ```{python}
-#| label: cell-platform-dir
+#| label: cell-cell-deck
 #| output: false
-sim_run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-sim_run_dir = scratch / "runs" / sim_run_id
+lh = LiquidHandler(
+    backend=LiquidHandlerChatterboxBackend(),
+    deck=STARLetDeck(),
+)
+await lh.setup()
 
-for name in ["raw", "derived", "logs", "state"]:
-    (sim_run_dir / name).mkdir(parents=True, exist_ok=True)
-
-sim_db = sqlite3.connect(sim_run_dir / "run.sqlite")
-```
-
-A small manifest:
-
-```{python}
-#| label: cell-platform-manifest
-manifest = {
-    "run_id": sim_run_id,
-    "plates": [
-        "plate_1",
-        "plate_2",
-        "plate_3",
-        "plate_4",
-    ],
-    "threshold": 0.8,
-    "incubation_seconds": 1800,
-}
-
-(sim_run_dir / "manifest.json").write_text(
-    json.dumps(manifest, indent=2)
+carrier = PLT_CAR_L5AC_A00(name="carrier")
+lh.deck.assign_child_resource(carrier, rails=10)
+carrier[0] = buffer = nest_1_troughplate_195000uL_Vb(
+    name="buffer"
 )
 
-print(json.loads((sim_run_dir / "manifest.json").read_text()))
-```
-
-Configure process logging:
-
-```{python}
-#| label: cell-platform-log
-#| output: false
-sim_log = logging.getLogger(f"run.{sim_run_id}")
-sim_log.setLevel(logging.INFO)
-sim_log.propagate = False
-
-sim_handler = logging.FileHandler(
-    sim_run_dir / "logs" / "process.log"
+tip_carrier = TIP_CAR_288_C00(name="tip_carrier")
+lh.deck.assign_child_resource(tip_carrier, rails=2)
+tip_carrier[0] = rack = opentrons_96_filtertiprack_200ul(
+    name="rack"
 )
-sim_handler.setFormatter(logging.Formatter(
-    "%(asctime)s %(levelname)s %(message)s"
-))
-sim_log.addHandler(sim_handler)
 ```
 
-### Create sample and scheduler tables
+The two stackers are `ResourceStack`s, and PLR is explicit about what that means — from its own
+docstring:
+
+> Stacks growing in the z direction are from bottom to top, and function as the
+> [stack data type](https://en.wikipedia.org/wiki/Stack_(abstract_data_type)).
 
 ```{python}
-#| label: cell-platform-tables
+#| label: cell-cell-stackers
 #| output: false
-sim_db.execute("""
-    CREATE TABLE samples (
-        plate       TEXT PRIMARY KEY,
-        sample_id   TEXT,
-        reads       INTEGER DEFAULT 0,
-        dilutions   INTEGER DEFAULT 0,
-        finished    INTEGER DEFAULT 0
-    )
-""")
+inp = ResourceStack(name="input_stacker", direction="z")
+out = ResourceStack(name="output_stacker", direction="z")
 
-sim_db.execute("""
-    CREATE TABLE jobs (
-        id          INTEGER PRIMARY KEY,
-        operation   TEXT,
-        resource    TEXT,
-        plate       TEXT,
-        status      TEXT DEFAULT 'queued',
-        priority    INTEGER DEFAULT 0,
-        not_before  REAL DEFAULT 0,
-        started     REAL,
-        finished    REAL
-    )
-""")
+lh.deck.assign_child_resource(
+    inp, location=Coordinate(600, 300, 100)
+)
+lh.deck.assign_child_resource(
+    out, location=Coordinate(600, 100, 100)
+)
 
-sim_db.execute("""
-    CREATE TABLE executions (
-        job_id      INTEGER,
-        operation   TEXT,
-        resource    TEXT,
-        plate       TEXT,
-        started     REAL,
-        finished    REAL
-    )
-""")
-
-for i in range(4):
-    sim_db.execute(
-        """
-        INSERT INTO samples(plate, sample_id)
-        VALUES (?, ?)
-        """,
-        (f"plate_{i+1}", f"S{i+1:03d}"),
-    )
-
-sim_db.commit()
+set_volume_tracking(True)
+set_tip_tracking(True)
+buffer["A1"][0].set_volume(195_000)
 ```
 
-### Simulate the cultures
+A stacker is not a machine. There is no backend and no `setup()` — the same idea as the magnet in
+[chapter 9](../part2/09_moving_labware.qmd#magnet), where state is expressed by position rather than
+by command. What makes it a stack is that gravity leaves exactly one plate reachable, and PLR
+enforces that rather than trusting the protocol:
 
 ```{python}
-#| label: cell-platform-cultures
+#| label: cell-cell-stack-guard
+#| error: true
+probe = cor_96_wellplate_360uL_Fb(name="probe")
+inp.assign_child_resource(probe)
+inp.assign_child_resource(
+    cor_96_wellplate_360uL_Fb(name="probe_2")
+)
+
+inp.unassign_child_resource(probe)     # not the top item
+```
+
+```{python}
+#| label: cell-cell-stack-clear
 #| output: false
-sim_clock = SimClock()
+for child in list(reversed(inp.children)):
+    inp.unassign_child_resource(child)
+```
 
-class SimCulture:
-    def __init__(self, od, rate, seed):
-        self.od = od
-        self.rate = rate
-        self.last_update = 0
-        self.rng = random.Random(seed)
+### The dilution is arithmetic
 
-    def update(self, now):
-        elapsed = now - self.last_update
-        self.od *= math.exp(self.rate * elapsed)
-        self.last_update = now
+Each well holds `V_SAMPLE` µL at a known concentration. Diluting to `TARGET` means adding buffer
+until the volume has grown by the ratio of the two concentrations. It is worth keeping this as a
+plain function of numbers — no robot, no database, no clock — because it is the part that can be
+wrong:
 
-    def measure(self, now):
-        self.update(now)
-        return self.od + self.rng.gauss(0, 0.015)
+```{python}
+#| label: cell-cell-plan
+TARGET, V_SAMPLE, WELL_MAX = 10.0, 10.0, 360.0
 
-    def dilute(self, now, factor=4):
-        self.update(now)
-        self.od /= factor
+def plan_well(conc):
+    if conc <= TARGET:                                  # <1>
+        return 0.0, "under"
 
+    buffer_vol = V_SAMPLE * (conc / TARGET - 1)
+
+    if V_SAMPLE + buffer_vol > WELL_MAX:                # <2>
+        return 0.0, "overflow"
+
+    return round(buffer_vol, 1), "ok"                   # <3>
+```
+
+1. A well already at or below target cannot be brought *up* by dilution. It goes forward untouched
+   and flagged, because the honest output of a normalization step is "here is what I could not do".
+2. The other bound is the labware. A sample concentrated enough to need more buffer than the well
+   holds needs an intermediate transfer, which this cell does not do.
+3. Channels dispense in 0.1 µL steps, so the plan is rounded to what the instrument can actually
+   deliver.
+
+```{python}
+#| label: cell-cell-plan-run
+for conc in [48.0, 112.4, 9.1, 6000.0]:
+    print(conc, plan_well(conc))
+```
+
+### Record the run
+
+The run directory and the process log are [chapter 13](13_record_runs.qmd); the tables are
+[chapter 14](14_state_in_sqlite.qmd).
+
+```{python}
+#| label: cell-cell-run-dir
+#| output: false
+run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+run_dir = scratch / "runs" / run_id
+(run_dir / "logs").mkdir(parents=True, exist_ok=True)
+
+log = logging.getLogger(f"run.{run_id}")
+log.setLevel(logging.INFO)
+log.propagate = False
+log.addHandler(
+    logging.FileHandler(run_dir / "logs" / "process.log")
+)
+
+db = sqlite3.connect(run_dir / "run.sqlite")
+
+db.execute("""
+    CREATE TABLE plates (
+        plate     TEXT PRIMARY KEY,
+        arrived   REAL,
+        concs     TEXT,
+        loaded    INTEGER,
+        started   REAL,
+        finished  REAL
+    )
+""")
+
+db.execute("""
+    CREATE TABLE wells (
+        plate     TEXT,
+        well      INTEGER,
+        conc      REAL,
+        buffer    REAL,
+        flag      TEXT,
+        achieved  REAL
+    )
+""")
+```
+
+Arrivals are a seeded stream of times and concentrations — the upstream process, reduced to the only
+two things this cell needs from it:
+
+```{python}
+#| label: cell-cell-arrivals
 sim_rng = random.Random(42)
+MEAN_GAP, SERVICE = 120, 300           # <1>
 
-cultures = {
-    f"plate_{i+1}": SimCulture(
-        od=0.10,
-        rate=sim_rng.gauss(0.00040, 0.000025),
-        seed=100 + i,
-    )
-    for i in range(4)
-}
-```
-
-### Submit scheduler jobs
-
-For the simulation, the scheduler queue is still the SQLite table:
-
-```{python}
-#| label: cell-platform-submit
-def submit_job(
-    operation,
-    resource,
-    plate,
-    not_before=0,
-    priority=0,
-):
-    sim_db.execute(
-        """
-        INSERT INTO jobs
-        (operation, resource, plate,
-         priority, not_before)
-        VALUES (?, ?, ?, ?, ?)
-        """,
+t = 0.0
+for i in range(6):
+    t += sim_rng.expovariate(1 / MEAN_GAP)
+    db.execute(
+        "INSERT INTO plates(plate, arrived, concs) VALUES (?,?,?)",
         (
-            operation,
-            resource,
-            plate,
-            priority,
-            not_before,
+            f"plate_{i+1}",
+            t,
+            json.dumps([
+                max(1.0, sim_rng.gauss(60, 25))
+                for _ in range(8)
+            ]),
         ),
     )
-    sim_db.commit()
+db.commit()
+
+for row in db.execute("SELECT plate, arrived FROM plates ORDER BY arrived"):
+    print(row[0], round(row[1]))
 ```
 
-Start each plate with preparation:
+1. Plates arrive faster than the cell can process them. That is the interesting case — with a gap
+   longer than the service time the stacker never holds more than one plate and nothing below is
+   visible.
+
+### Load and process
+
+Upstream sets each arrived plate on top of the input stacker. The robot is not involved:
 
 ```{python}
-#| label: cell-platform-submit-use
-#| output: false
-for plate in cultures:
-    submit_job(
-        "prepare",
-        "liquid_handler",
-        plate,
-    )
-```
-
-### Simulate resource occupancy
-
-Give operations durations:
-
-```{python}
-#| label: cell-platform-durations
-DURATION = {
-    "prepare": 120,
-    "read": 60,
-    "dilute": 90,
-}
-
-resource_free_at = {
-    "liquid_handler": 0.0,
-    "reader": 0.0,
-}
-```
-
-Find the next queued job that can start:
-
-```{python}
-#| label: cell-platform-ready
-def ready_jobs():
-    rows = sim_db.execute(
+#| label: cell-cell-load
+def load_arrivals(now):
+    rows = db.execute(
         """
-        SELECT id, operation, resource,
-               plate, priority, not_before
-        FROM jobs
-        WHERE status = 'queued'
-          AND not_before <= ?
-        ORDER BY priority DESC, id ASC
+        SELECT plate, concs FROM plates
+        WHERE arrived <= ? AND loaded IS NULL
+        ORDER BY arrived
         """,
-        (sim_clock.now(),),
+        (now,),
     ).fetchall()
 
-    return [
-        row for row in rows
-        if resource_free_at[row[2]] <= sim_clock.now()
-    ]
-```
+    for plate_id, concs in rows:
+        plate = cor_96_wellplate_360uL_Fb(name=plate_id)
 
-Start one:
+        for i in range(8):
+            plate[i][0].set_volume(V_SAMPLE)
 
-```{python}
-#| label: cell-platform-start
-def start_job(row):
-    job_id, operation, resource, plate, _, _ = row
-
-    started = sim_clock.now()
-    finished = started + DURATION[operation]
-
-    sim_db.execute(
-        """
-        UPDATE jobs
-        SET status='running',
-            started=?,
-            finished=?
-        WHERE id=?
-        """,
-        (started, finished, job_id),
-    )
-
-    resource_free_at[resource] = finished
-
-    sim_db.commit()
-
-    sim_log.info(
-        "start %s %s on %s",
-        operation,
-        plate,
-        resource,
-    )
-```
-
-The operation is considered running until its simulated finish time.
-
-### Complete jobs and generate follow-up work
-
-```{python}
-#| label: cell-platform-constants
-THRESHOLD = 0.8
-INCUBATION = 1800
-MAX_READS = 5
-```
-
-```{python}
-#| label: cell-platform-finish
-#| output: false
-def finish_jobs():
-    rows = sim_db.execute(
-        """
-        SELECT id, operation, resource,
-               plate, started, finished
-        FROM jobs
-        WHERE status='running'
-          AND finished <= ?
-        """,
-        (sim_clock.now(),),
-    ).fetchall()
-
-    for job_id, operation, resource, plate, started, finished in rows:
-
-        if operation == "prepare":
-            submit_job(
-                "read",
-                "reader",
-                plate,
-                not_before=finished + INCUBATION,
-            )
-
-        elif operation == "read":
-            od = cultures[plate].measure(finished)
-
-            row = sim_db.execute(
-                """
-                SELECT reads
-                FROM samples
-                WHERE plate=?
-                """,
-                (plate,),
-            ).fetchone()
-
-            reads = row[0] + 1
-
-            sim_db.execute(
-                """
-                UPDATE samples
-                SET reads=?
-                WHERE plate=?
-                """,
-                (reads, plate),
-            )
-
-            sim_log.info(
-                "read %s OD=%.3f",
-                plate,
-                od,
-            )
-
-            if reads >= MAX_READS:
-                sim_db.execute(
-                    """
-                    UPDATE samples
-                    SET finished=1
-                    WHERE plate=?
-                    """,
-                    (plate,),
-                )
-
-            elif od >= THRESHOLD:
-                submit_job(
-                    "dilute",
-                    "liquid_handler",
-                    plate,
-                    priority=10,
-                )
-
-            else:
-                submit_job(
-                    "read",
-                    "reader",
-                    plate,
-                    not_before=finished + INCUBATION,
-                )
-
-        elif operation == "dilute":
-            cultures[plate].dilute(finished)
-
-            sim_db.execute(
-                """
-                UPDATE samples
-                SET dilutions=dilutions+1
-                WHERE plate=?
-                """,
-                (plate,),
-            )
-
-            submit_job(
-                "read",
-                "reader",
-                plate,
-                not_before=finished + INCUBATION,
-            )
-
-        sim_db.execute(
-            """
-            UPDATE jobs
-            SET status='complete'
-            WHERE id=?
-            """,
-            (job_id,),
+        inp.assign_child_resource(plate)
+        db.execute(
+            "UPDATE plates SET loaded=1 WHERE plate=?",
+            (plate_id,),
         )
+    db.commit()
+```
 
-        sim_db.execute(
-            """
-            INSERT INTO executions
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
+One plate through the cell. `handle_errors` is the wrapper from
+[chapter 15](15_compose_behaviour.qmd#recovery); the wells that need no buffer are dropped from
+`use_channels` rather than dispensed with a token volume:
+
+```{python}
+#| label: cell-cell-normalize
+#| output: false
+import functools
+
+def handle_errors(fn):
+    @functools.wraps(fn)
+    async def wrapper(*args, **kwargs):
+        try:
+            return await fn(*args, **kwargs)
+        except Exception:
+            log.exception("%s failed", fn.__name__)
+            raise
+    return wrapper
+
+@handle_errors
+async def normalize(plate, concs, spots):
+    rows = [plan_well(c) for c in concs]
+    need = [i for i, (vol, _) in enumerate(rows) if vol > 0]     # <1>
+    vols = [rows[i][0] for i in need]
+
+    await lh.pick_up_tips(
+        [spots[i] for i in need], use_channels=need
+    )
+    await lh.aspirate(
+        [buffer["A1"][0]] * len(need),
+        vols=vols,
+        use_channels=need,
+    )
+    await lh.dispense(
+        [plate[i][0] for i in need],
+        vols=vols,
+        use_channels=need,
+    )
+    await lh.discard_tips(use_channels=need)
+
+    return rows
+```
+
+1. `use_channels` must match the length of `vols`; a well that needs nothing is simply not a channel
+   in this operation.
+
+### Run it
+
+The loop has no scheduler in it. When the stacker is empty the clock jumps to the next arrival;
+otherwise the top plate is taken. **The hardware chooses which plate runs**, and the loop only
+records the consequence:
+
+```{python}
+#| label: cell-cell-run
+#| output: false
+clock = SimClock()
+column = 1
+
+while True:
+    load_arrivals(clock.now())
+
+    if len(inp.children) == 0:
+        nxt = db.execute(
+            "SELECT MIN(arrived) FROM plates WHERE finished IS NULL"
+        ).fetchone()[0]
+
+        if nxt is None:
+            break
+
+        clock.advance_to(nxt)                                    # <1>
+        continue
+
+    plate = inp.get_top_item()                                   # <2>
+    arrived, concs = db.execute(
+        "SELECT arrived, concs FROM plates WHERE plate=?",
+        (plate.name,),
+    ).fetchone()
+
+    started = clock.now()
+    await lh.move_plate(plate, carrier[1])
+
+    rows = await normalize(
+        plate, json.loads(concs), rack[f"A{column}:H{column}"]
+    )
+    column += 1
+
+    await lh.move_plate(plate, out)
+    clock.advance(SERVICE)
+
+    for i, ((vol, flag), conc) in enumerate(zip(rows, json.loads(concs))):
+        db.execute(
+            "INSERT INTO wells VALUES (?,?,?,?,?,?)",
             (
-                job_id,
-                operation,
-                resource,
-                plate,
-                started,
-                finished,
+                plate.name, i, conc, vol, flag,
+                quantify(conc * V_SAMPLE / (V_SAMPLE + vol)),    # <3>
             ),
         )
 
-    sim_db.commit()
+    db.execute(
+        "UPDATE plates SET started=?, finished=? WHERE plate=?",
+        (started, clock.now(), plate.name),
+    )
+    db.commit()
+    log.info(
+        "%s waited %.0f s", plate.name, started - arrived
+    )
 ```
 
-### Advance simulated time to the next event
-
-If nothing can start now, jump directly to the next interesting time:
-
-```{python}
-#| label: cell-platform-next-event
-def next_event_time():
-    times = []
-
-    row = sim_db.execute(
-        """
-        SELECT MIN(not_before)
-        FROM jobs
-        WHERE status='queued'
-          AND not_before > ?
-        """,
-        (sim_clock.now(),),
-    ).fetchone()
-
-    if row[0] is not None:
-        times.append(row[0])
-
-    row = sim_db.execute(
-        """
-        SELECT MIN(finished)
-        FROM jobs
-        WHERE status='running'
-          AND finished > ?
-        """,
-        (sim_clock.now(),),
-    ).fetchone()
-
-    if row[0] is not None:
-        times.append(row[0])
-
-    return min(times) if times else None
-```
-
-### Run the simulated platform
+1. No sleeping. Idle time is a jump.
+2. `get_top_item()` is the only plate the gripper can reach.
+3. The achieved concentration is what the dilution actually produced, seen through a quantification
+   with the noise from the first recipe.
 
 ```{python}
-#| label: cell-platform-run
-#| output: false
-while True:
-    finish_jobs()
-
-    unfinished = sim_db.execute(
-        """
-        SELECT COUNT(*)
-        FROM samples
-        WHERE finished=0
-        """
-    ).fetchone()[0]
-
-    if unfinished == 0:
-        break
-
-    ready = ready_jobs()
-
-    if ready:
-        for row in ready:
-            resource = row[2]
-
-            if resource_free_at[resource] <= sim_clock.now():
-                start_job(row)
-
-        continue
-
-    next_time = next_event_time()
-
-    if next_time is None:
-        raise RuntimeError("simulation stalled")
-
-    sim_clock.advance_to(next_time)
-```
-
-A process representing several hours of experimental time now executes without waiting several
-hours. Inspect the results:
-
-```{python}
-#| label: cell-platform-results
-for row in sim_db.execute(
-    """
-    SELECT plate, reads, dilutions, finished
-    FROM samples
-    ORDER BY plate
-    """
+#| label: cell-cell-results
+for plate_id, arrived, started in db.execute(
+    "SELECT plate, arrived, started FROM plates ORDER BY arrived"
 ):
-    print(row)
+    print(
+        f"{plate_id}  arrived {arrived:6.0f}  "
+        f"started {started:6.0f}  waited {started - arrived:6.0f}"
+    )
 ```
-
-The exact result depends on the simulated growth rates and measurement noise, but is reproducible
-because the RNGs were seeded.
 
 ### Test process invariants
 
-A platform test does not need to know every intermediate scheduler decision. It can test properties
-that should always remain true.
+The exact numbers depend on the seeded arrivals; these properties do not.
 
-Every sample finished:
-
-```{python}
-#| label: cell-platform-invariant-finished
-unfinished = sim_db.execute(
-    """
-    SELECT COUNT(*)
-    FROM samples
-    WHERE finished=0
-    """
-).fetchone()[0]
-
-assert unfinished == 0
-print("every sample finished")
-```
-
-Every plate was read the expected number of times:
+Every plate was processed, and none before it arrived:
 
 ```{python}
-#| label: cell-platform-invariant-reads
-assert all(
-    reads == MAX_READS
-    for (reads,) in sim_db.execute(
-        "SELECT reads FROM samples"
-    )
-)
-print("every plate read exactly MAX_READS times")
+#| label: cell-cell-invariant-order
+assert db.execute(
+    "SELECT COUNT(*) FROM plates WHERE finished IS NULL"
+).fetchone()[0] == 0
+
+assert db.execute(
+    "SELECT COUNT(*) FROM plates WHERE started < arrived"
+).fetchone()[0] == 0
+print("every plate processed, none before it arrived")
 ```
 
-A resource was never used by overlapping jobs:
+Every well reached target or was flagged:
 
 ```{python}
-#| label: cell-platform-invariant-overlap
-for resource in ["reader", "liquid_handler"]:
-    intervals = sim_db.execute(
-        """
-        SELECT started, finished
-        FROM executions
-        WHERE resource=?
-        ORDER BY started
-        """,
-        (resource,),
-    ).fetchall()
-
-    for (_, end), (next_start, _) in zip(
-        intervals,
-        intervals[1:],
-    ):
-        assert end <= next_start
-print("no overlapping use of any resource")
+#| label: cell-cell-invariant-target
+for conc, vol, flag, achieved in db.execute(
+    "SELECT conc, buffer, flag, achieved FROM wells"
+):
+    if flag == "ok":
+        assert abs(achieved - TARGET) / TARGET <= 0.10           # <1>
+print("every unflagged well within 10% of target")
 ```
 
-No job ran before its scheduled time:
+1. The tolerance has to cover the 0.1 µL rounding in `plan_well` *and* the quantification noise. A
+   tolerance tighter than the measurement is a test that fails for no reason.
+
+Nothing teleported — the plates are physically where the protocol believes:
 
 ```{python}
-#| label: cell-platform-invariant-timing
-violations = sim_db.execute(
-    """
-    SELECT COUNT(*)
-    FROM jobs
-    WHERE started < not_before
-    """
-).fetchone()[0]
-
-assert violations == 0
-print("no job ran before its not_before time")
+#| label: cell-cell-invariant-position
+assert len(inp.children) == 0
+assert len(out.children) == 6
+assert carrier[1].resource is None
+print("input stacker drained, six plates on the output stacker, deck clear")
 ```
 
-Every completed scheduler job has an execution record:
+That last one is worth more than it looks. Chatterbox validates *state*, not physics
+([chapter 1](../part1/01_robot_on_screen.qmd#workcell)) — it will happily print a move that could
+never happen. The resource tree is what catches it.
+
+### A stacker is a stack
+
+The plates did not come out in the order they went in:
 
 ```{python}
-#| label: cell-platform-invariant-recorded
-completed = sim_db.execute(
-    """
-    SELECT COUNT(*)
-    FROM jobs
-    WHERE status='complete'
-    """
-).fetchone()[0]
+#| label: cell-cell-fifo
+order = db.execute(
+    "SELECT arrived, started FROM plates ORDER BY started"
+).fetchall()
 
-recorded = sim_db.execute(
-    "SELECT COUNT(*) FROM executions"
-).fetchone()[0]
-
-assert completed == recorded
-print("every completed job has an execution record")
+fifo = all(a <= b for (a, _), (b, _) in zip(order, order[1:]))
+print("FIFO:", fifo)
+print("longest wait:", round(max(s - a for a, s in order)), "s")
 ```
 
-The run produced its expected artifacts:
+This is not a bug in the loop, and no query will fix it. Plates are pushed in arrival order and
+popped from the top, which is **non-preemptive LCFS** — last-come-first-served. Its mean wait is
+identical to FIFO, because any work-conserving discipline that ignores service times leaves the same
+work in the system. What changes is the tail: most plates go straight in, and one plate sits at the
+bottom of the stacker while later arrivals are stacked on top of it and lifted back off.
 
-```{python}
-#| label: cell-platform-invariant-artifacts
-assert (sim_run_dir / "manifest.json").exists()
-assert (sim_run_dir / "run.sqlite").exists()
-assert (sim_run_dir / "logs" / "process.log").exists()
-print("all run artifacts present")
-```
+Worth stating precisely, because it is the part that generalizes: **LIFO comes from the pair (push
+order, pop end), not from the container.** Load the same stacker bottom-up in reverse and it serves
+FIFO. The hardware constrains the discipline; it does not determine it.
 
-More complicated simulations can inject faults:
+### Exercise: what would a true FIFO stacker be?
+
+The alternative PLR already models is random access — `pylabrobot.storage.Incubator`, with
+independent sites and a loading tray, backed by Cytomat or Liconic hardware. Any plate is reachable,
+so arrival order is yours to choose. It also costs more and takes more deck.
+
+Between the two sits the bottom-feed destacker, which PLR does not model. Consider it from both
+ends.
+
+**Physically.** The bottom plate carries the weight of the stack, so dispensing it means holding
+plate 2 while plate 1 leaves — fingers engaging a plate skirt, or a shaft that lifts the stack by one
+pitch. What does that buy, and what does it cost in tooling that only fits one plate format? And what
+is the alternative that needs no new mechanism at all — at the price of putting every plate through
+two extra moves?
+
+**As a PLR resource.** Subclass `ResourceStack`, add `get_bottom_item()`, and override the top-only
+guard seen above. Then check the work against the resource tree:
 
 ```python
 #| eval: false
-if rng.random() < 0.02:
-    raise RuntimeError("simulated reader fault")
+print([(c.name, c.location.z) for c in stacker.children])
+print(stacker.get_size_z())
 ```
 
-vary operation times:
+Removing the bottom plate without re-settling the plates above it leaves a stack whose reported
+height and whose children's positions disagree — the plates float. Chatterbox will not notice.
+Custom resources are [chapter 17](../part4/17_custom_labware.qmd).
+
+### Exercise: how old does the oldest plate get?
+
+The run recorded `arrived` and `started` for every plate but never asked the question that matters.
+Nothing here depends on the average wait; what matters is whether the oldest plate on the deck was
+still good when it was processed.
 
 ```python
 #| eval: false
-duration = rng.uniform(50, 70)
+db.execute("SELECT MAX(started - arrived) FROM plates").fetchone()[0]
 ```
 
-or simulate machine unavailability:
+That is one number from one run — a single draw. The simulation is seeded and costs no wall-clock
+time, which is exactly what makes it cheap to ask for the distribution instead: re-run across seeds,
+collect the maximum from each, and look at the spread. Two things to watch for:
 
-```python
-#| eval: false
-resource_free_at["reader"] += 600
-```
+- The mean wait will not move between LIFO and FIFO. The maximum will, by a lot. Whichever statistic
+  is measured decides which conclusion is reached.
+- The parameter governing both is the ratio of `SERVICE` to `MEAN_GAP`. Push it toward 1 and see
+  which statistic degrades first.
 
-The same invariants can then test whether the orchestration still behaves correctly.
+If the tail is longer than the chemistry tolerates, the fix is not a better query. It is different
+equipment.
 
 :::
 
@@ -806,7 +598,11 @@ The same invariants can then test whether the orchestration still behaves correc
 - Substitute time and measurements: a protocol that depends on a clock object and a seeded RNG can
   run instantly and reproduce a failing test.
 - Seed the RNG (`random.Random(42)`) — stochastic, but deterministic.
-- The scheduler queue is ordinary persistent data: `priority`, `resource`, and `not_before` already
-  provide a useful small scheduling model, and the workers are interchangeable.
-- Simulate the platform, then test **invariants** — resource exclusivity, timing constraints,
-  completion, persistent output — rather than individual function results.
+- Keep the arithmetic that can be wrong in a plain function of numbers, separate from the robot, the
+  database, and the clock.
+- Test **invariants** — completion, ordering, tolerance to target, and physical position — rather
+  than individual values. Set the tolerance wider than the simulated measurement noise.
+- The resource tree is the check that a move was physically possible; chatterbox validates state,
+  not physics.
+- Queue discipline is a property of the equipment. A `ResourceStack` is a stack, and serving from it
+  is LCFS: same mean wait as FIFO, much heavier tail.

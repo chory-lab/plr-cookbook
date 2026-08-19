@@ -302,6 +302,137 @@ With real hardware the source trough must hold enough reagent for the sum of all
 wrapper only decides *when* to go back to the trough, it does not check the trough's own tracked
 volume.
 
+### Recover by trying the next candidate
+
+The wrappers so far log and re-raise, or clean up after a step. A different family of handlers
+recovers *by substituting the argument*: when an error means "this particular resource won't work,
+but the next one might", the wrapper advances to the next candidate and retries. Two failures that
+behave this way are an empty tip spot and a source that cannot supply the requested volume.
+
+A pickup that fails because the spot is empty is a `NoTipError`. `pick_up_tips` raises it before
+anything is mounted — the failed pickup leaves the head unchanged — so retrying the *next* spot is
+safe, and no state needs undoing:
+
+```{python}
+#| label: cell-decorator-try-next-tip
+def try_next_tip(spots):
+    def decorator(fn):
+        @functools.wraps(fn)
+        async def wrapper(lh, *args, **kwargs):
+            for spot in spots:                                          # <1>
+                try:
+                    return await fn(lh, [spot], *args, **kwargs)        # <2>
+                except NoTipError:                                       # <3>
+                    protocol_log.warning(
+                        "no tip at %s; trying the next spot", spot.name
+                    )
+            raise RuntimeError(
+                f"no usable tip left among {[s.name for s in spots]}"    # <4>
+            )
+        return wrapper
+    return decorator
+```
+
+1. The candidates are the spots the caller hands over — `rack["A12:D12"]` here, but any iterable
+   of `TipSpot`s works, so a partial rack or a single column can be the pool to search.
+2. The candidate is handed over as a one-item list, because that is what `pick_up_tips` takes —
+   one spot per channel. The wrapped function is responsible for the pickup; here that is
+   `with_fresh_tip`.
+3. `NoTipError` is raised by `pick_up_tips` when the spot has no tip; the tracker raises before the
+   backend is involved, so nothing has been moved.
+4. Only when every candidate is empty does the wrapper give up — and it says so explicitly.
+
+Note what it does **not** catch: `HasTipError` means a channel *already has* a tip. Advancing to the
+next spot does not fix that — the same channel is still occupied. The recovery for an occupied
+channel is to drop or return the mounted tip first, then retry. Keeping the two failures separate is
+the point: `try_next_tip` handles "no tip here", and the caller handles "the head already has tips"
+with cleanup.
+
+```{python}
+#| label: cell-decorator-try-next-tip-use
+#| output: false
+rack.set_tip_state({"A12": False, "B12": False})   # two empty candidate spots
+
+@try_next_tip(rack["A12:D12"])
+@with_fresh_tip
+async def transfer_sample(lh, source, dest, volume):
+    await lh.aspirate(source, vols=[volume])
+    await lh.dispense(dest, vols=[volume])
+
+await transfer_sample(lh, plate["A1"], plate["B1"], 50)
+```
+
+The wrapper skips the two emptied spots and picks up from the first spot that has a tip. The
+decision is recorded at the process tier like every other wrapper decision:
+
+```{python}
+#| label: cell-decorator-try-next-tip-log
+for line in (scratch / "run.log").read_text().splitlines():
+    if "trying the next spot" in line:
+        print(line)
+```
+
+The same shape substitutes a different *source* when aspiration fails. `TooLittleLiquidError` is
+raised by the volume tracker when a source cannot supply the requested volume — again before the
+backend call, so nothing has moved:
+
+```{python}
+#| label: cell-decorator-try-next-source
+def try_next_source(sources):
+    def decorator(fn):
+        @functools.wraps(fn)
+        async def wrapper(lh, *args, **kwargs):
+            last_error = None
+            for source in sources:
+                try:
+                    return await fn(lh, source, *args, **kwargs)         # <1>
+                except TooLittleLiquidError as error:                     # <2>
+                    last_error = error
+                    protocol_log.warning(
+                        "%s cannot supply %s; trying the next source",
+                        source.name, error,
+                    )
+            raise last_error or TooLittleLiquidError(
+                f"all sources exhausted: {[s.name for s in sources]}"
+            )
+        return wrapper
+    return decorator
+```
+
+1. The wrapped function receives the *source* as an argument, so the same aspirate body runs against
+   whichever candidate is current.
+2. `TooLittleLiquidError` is raised when the source cannot supply the requested volume; re-running
+   against the next source is safe because nothing has been aspirated.
+
+A nearly-dry spare trough then falls back to the full one:
+
+```{python}
+#| label: cell-decorator-try-next-source-use
+#| output: false
+carrier[3] = spare = nest_1_troughplate_195000uL_Vb(name="spare")
+spare["A1"][0].set_volume(20)                        # nearly dry
+
+@try_next_source([spare["A1"][0], trough["A1"][0]])
+async def take_reagent(lh, source, volume):
+    await lh.aspirate([source], vols=[volume])
+
+await lh.pick_up_tips(rack["A11"])
+await take_reagent(lh, 50)                           # spare can't supply 50 uL
+await lh.discard_tips()
+```
+
+```{python}
+#| label: cell-decorator-try-next-source-log
+for line in (scratch / "run.log").read_text().splitlines():
+    if "cannot supply" in line:
+        print(line)
+```
+
+The two wrappers differ in one respect worth stating: `try_next_tip` *consumes* the candidate
+through `with_fresh_tip`, while `try_next_source` passes the candidate into the wrapped function as
+its first argument. Both keep the recovery policy out of the protocol body, which is the whole
+point of this chapter.
+
 :::
 
 ---
@@ -316,3 +447,7 @@ volume.
   exception policy in a wrapper instead of in each protocol body.
 - Track the liquid in the tips and top up from a trough with `use_channels` targeting exactly the
   channels that need it.
+- Some errors mean "this resource won't work, try the next one": `NoTipError` (empty tip spot) and
+  `TooLittleLiquidError` (source can't supply) both raise *before* anything is moved, so a wrapper
+  can advance to the next candidate and retry safely. `HasTipError` (channel already occupied) does
+  not work that way — clean up the mounted tip instead of advancing.
