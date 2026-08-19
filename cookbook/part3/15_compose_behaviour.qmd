@@ -321,7 +321,7 @@ def try_next_tip(spots):
         async def wrapper(lh, *args, **kwargs):
             for spot in spots:                                          # <1>
                 try:
-                    return await fn(lh, spot, *args, **kwargs)          # <2>
+                    return await fn(lh, [spot], *args, **kwargs)        # <2>
                 except NoTipError:                                       # <3>
                     protocol_log.warning(
                         "no tip at %s; trying the next spot", spot.name
@@ -335,7 +335,8 @@ def try_next_tip(spots):
 
 1. The candidates are the spots the caller hands over — `rack["A12:D12"]` here, but any iterable
    of `TipSpot`s works, so a partial rack or a single column can be the pool to search.
-2. The wrapped function receives the spot and is responsible for picking it up — here that is
+2. The candidate is handed over as a one-item list, because that is what `pick_up_tips` takes —
+   one spot per channel. The wrapped function is responsible for the pickup; here that is
    `with_fresh_tip`.
 3. `NoTipError` is raised by `pick_up_tips` when the spot has no tip; the tracker raises before the
    backend is involved, so nothing has been moved.
@@ -413,7 +414,7 @@ spare["A1"][0].set_volume(20)                        # nearly dry
 
 @try_next_source([spare["A1"][0], trough["A1"][0]])
 async def take_reagent(lh, source, volume):
-    await lh.aspirate(source, vols=[volume])
+    await lh.aspirate([source], vols=[volume])
 
 await lh.pick_up_tips(rack["A11"])
 await take_reagent(lh, 50)                           # spare can't supply 50 uL
