@@ -58,7 +58,6 @@ book:
         - part4/18_custom_liquid_handler.qmd
 
     - CHEATSHEET.qmd
-    - live.qmd
 
 format:
   html:
