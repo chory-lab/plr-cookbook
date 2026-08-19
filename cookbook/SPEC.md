@@ -289,15 +289,22 @@ Part III. The capstone of the part.
 
 | Recipe | Anchor | APIs | Notes |
 |---|---|---|---|
-| Make simulated time and data explicit | `#simulation` | `SimClock`, `random.Random(seed)`, `simulated_od`, `math.exp` | Seed the RNG so a failing test reproduces |
-| Simulate a small automated platform | `#platform` | `SimClock`, SQLite scheduler, `resource_free_at`, invariant asserts | `#simulation`'s `SimClock` must precede it; the platform uses no `LiquidHandler` |
+| Make simulated time and data explicit | `#simulation` | `SimClock`, `random.Random(seed)`, `quantify` | Seed the RNG so a failing test reproduces |
+| Simulate a normalization cell | `#platform` | `SimClock`, `ResourceStack.get_top_item`, `move_plate`, `use_channels`, volume tracking, invariant asserts | `#simulation`'s `SimClock` must precede it; the cell drives a real `LiquidHandler` on chatterbox |
 
-**Must cover:** the platform section is the combining build — it should use the run-directory and
-logging discipline of ch. 13 and the persistent-queue idea of ch. 14, and its tests assert
-**invariants** (resource exclusivity, timing, completion, artifacts), not individual results.
+**Must cover:** the cell section is the combining build — it should use the run-directory and
+logging discipline of ch. 13, the tables of ch. 14, and a wrapper from ch. 15, and its tests assert
+**invariants** (completion, ordering, tolerance to target, physical position), not individual
+results. Tolerance must be wider than the simulated measurement noise. The plates move on the deck:
+the resource tree is what proves a move was physically possible, since chatterbox validates state,
+not physics. Queue discipline follows from the equipment — a `ResourceStack` serves LCFS, which has
+FIFO's mean wait and a much heavier tail.
 
-**No course material.** No exercises, no graded content — the platform is a finished, shown build
-the reader follows, like ch. 17–18.
+**Two closing prompts, no graded content.** The build itself is finished and shown, like ch. 17–18.
+It ends with two open questions the reader is asked to think through rather than solve: what a
+true FIFO stacker would be, physically and as a `ResourceStack` subclass; and how to get a
+distribution of the maximum plate age out of a seeded simulation. Neither is graded and neither
+has an answer in the text.
 
 ---
 
