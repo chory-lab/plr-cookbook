@@ -419,6 +419,41 @@ async def normalize(plate, concs, spots):
 3. A plate whose wells are all at or below target needs no buffer at all. Picking up zero tips is
    not a no-op worth asking the robot to perform.
 
+That is one `aspirate` and one `dispense` for the whole plate, not a loop of single transfers. The
+backend sees every active channel move together, each carrying its own volume — this is a
+seven-sample plate whose second and fifth wells were already at target:
+
+```text
+Aspirating:
+pip#  vol(ul)  resource          offset
+  p0: 39.5     buffer_well_A1    0,24.0,0
+  p2: 61.2     buffer_well_A1    0,12.0,0
+  p3: 24.4     buffer_well_A1    0,0,0
+  p5: 83.9     buffer_well_A1    0,-12.0,0
+  p6: 12.0     buffer_well_A1    0,-24.0,0
+Dispensing:
+  p0: 39.5     p_well_A1
+  p2: 61.2     p_well_C1
+  p3: 24.4     p_well_D1
+  p5: 83.9     p_well_F1
+  p6: 12.0     p_well_G1
+```
+
+Three things are worth reading off that. The gaps at `p1` and `p4` are the wells that needed nothing
+— idle channels never picked up a tip. Channel *i* lands in row *i*, which is the head's fixed
+spacing showing through. And the trough offsets were not asked for: PLR spread the active channels
+across the reservoir on its own.
+
+What this does **not** do is reuse tips between plates. These tips only ever touch buffer, so a
+non-contact dispense above the liquid surface would let one set of eight serve all six plates —
+eight tips instead of thirty-four.
+
+That is a method-development decision, not a code cleanup, and it is worth knowing that nothing in
+the library will check it for you. `CrossContaminationError` exists and is never raised
+([chapter 10](../part2/10_errors.qmd#dead-errors)): volume tracking will tell you a tip went dry,
+and tip tracking will tell you a spot is empty, but no tracker knows what a tip has touched. Reusing
+tips is the point where simulation stops helping and the liquid-class work starts.
+
 ### Run it
 
 The loop has no scheduler in it. When the stacker is empty the clock jumps to the next arrival;
