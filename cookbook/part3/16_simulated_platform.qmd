@@ -177,7 +177,7 @@ buffer["A1"][0].set_volume(195_000)
 ```
 
 A stacker is not a machine. There is no backend and no `setup()` — the same idea as the magnet in
-[chapter 9](../part2/09_moving_labware.qmd#magnet), where state is expressed by position rather than
+[chapter 9](../part2/09_moving_labware.qmd#move-plate-to-magnet), where state is expressed by position rather than
 by command. What makes it a stack is that gravity leaves exactly one plate reachable, and PLR
 enforces that rather than trusting the protocol:
 
@@ -192,6 +192,9 @@ inp.assign_child_resource(
 
 inp.unassign_child_resource(probe)     # not the top item
 ```
+
+Taking the top plate off a stack is [chapter 9](../part2/09_moving_labware.qmd#plate-stacks); here
+the stack is the cell's inbox.
 
 ```{python}
 #| label: cell-cell-stack-clear
