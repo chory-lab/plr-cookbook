@@ -176,6 +176,17 @@ set_tip_tracking(True)
 buffer["A1"][0].set_volume(195_000)
 ```
 
+That is one rack of 96 filtered 200 µL tips and a single-well trough holding 195 mL. The run below
+uses 34 tips and 1.8 mL of buffer, and its thirstiest well takes 83.9 µL — inside one tip, so no well
+needs a second trip to the trough and the refill wrapper from
+[chapter 15](15_compose_behaviour.qmd#recovery) is not needed here.
+
+Tips are indexed by column, because channel *i* sits at a fixed offset and can only reach row *i*.
+Each plate takes the next column, so a three-sample plate retires all eight spots: six plates retire
+48 to use 34. That is the real cost of an eight-channel head on partial plates, not an accident of
+the code. It also sets a limit worth knowing — one rack covers twelve plates, and the thirteenth
+asks `rack["A13:H13"]` for tips that do not exist.
+
 A stacker is not a machine. There is no backend and no `setup()` — the same idea as the magnet in
 [chapter 9](../part2/09_moving_labware.qmd#move-plate-to-magnet), where state is expressed by position rather than
 by command. What makes it a stack is that gravity leaves exactly one plate reachable, and PLR
@@ -294,6 +305,7 @@ MEAN_GAP, SERVICE = 120, 300           # <1>
 t = 0.0
 for i in range(6):
     t += sim_rng.expovariate(1 / MEAN_GAP)
+    n = sim_rng.randint(3, 8)                      # <2>
     db.execute(
         "INSERT INTO plates(plate, arrived, concs) VALUES (?,?,?)",
         (
@@ -301,19 +313,23 @@ for i in range(6):
             t,
             json.dumps([
                 max(1.0, sim_rng.gauss(60, 25))
-                for _ in range(8)
+                for _ in range(n)
             ]),
         ),
     )
 db.commit()
 
-for row in db.execute("SELECT plate, arrived FROM plates ORDER BY arrived"):
-    print(row[0], round(row[1]))
+for plate_id, arrived, concs in db.execute(
+    "SELECT plate, arrived, concs FROM plates ORDER BY arrived"
+):
+    print(plate_id, round(arrived), len(json.loads(concs)), "samples")
 ```
 
 1. Plates arrive faster than the cell can process them. That is the interesting case — with a gap
    longer than the service time the stacker never holds more than one plate and nothing below is
    visible.
+2. A plate off an extraction step is rarely full. Varying the count is what keeps the channel
+   arithmetic below honest: nothing may assume eight.
 
 ### Load and process
 
@@ -334,7 +350,7 @@ def load_arrivals(now):
     for plate_id, concs in rows:
         plate = cor_96_wellplate_360uL_Fb(name=plate_id)
 
-        for i in range(8):
+        for i in range(len(json.loads(concs))):          # <1>
             plate[i][0].set_volume(V_SAMPLE)
 
         inp.assign_child_resource(plate)
@@ -345,9 +361,13 @@ def load_arrivals(now):
     db.commit()
 ```
 
+1. Only the occupied wells get a volume. The rest of the plate is empty, and the volume tracker will
+   say so if the protocol reaches for one.
+
 One plate through the cell. `handle_errors` is the wrapper from
-[chapter 15](15_compose_behaviour.qmd#recovery); the wells that need no buffer are dropped from
-`use_channels` rather than dispensed with a token volume:
+[chapter 15](15_compose_behaviour.qmd#recovery). Two things vary per plate now — how many samples it
+carries, and which of those need buffer at all — and both are handled the same way, by choosing
+channels rather than by padding volumes:
 
 ```{python}
 #| label: cell-cell-normalize
@@ -366,9 +386,12 @@ def handle_errors(fn):
 
 @handle_errors
 async def normalize(plate, concs, spots):
-    rows = [plan_well(c) for c in concs]
-    need = [i for i, (vol, _) in enumerate(rows) if vol > 0]     # <1>
+    rows = [plan_well(c) for c in concs]                        # <1>
+    need = [i for i, (vol, _) in enumerate(rows) if vol > 0]     # <2>
     vols = [rows[i][0] for i in need]
+
+    if not need:                                                 # <3>
+        return rows
 
     await lh.pick_up_tips(
         [spots[i] for i in need], use_channels=need
@@ -388,8 +411,13 @@ async def normalize(plate, concs, spots):
     return rows
 ```
 
-1. `use_channels` must match the length of `vols`; a well that needs nothing is simply not a channel
-   in this operation.
+1. The plate's sample count comes from the worklist, not from the labware — `concs` is however many
+   wells were filled upstream, and everything below is sized from it.
+2. `use_channels` must match the length of `vols`; a well that needs nothing is simply not a channel
+   in this operation. Between a partial plate and the wells already at target, the channels in use
+   are a subset of a subset.
+3. A plate whose wells are all at or below target needs no buffer at all. Picking up zero tips is
+   not a no-op worth asking the robot to perform.
 
 ### Run it
 
@@ -485,6 +513,27 @@ assert db.execute(
     "SELECT COUNT(*) FROM plates WHERE started < arrived"
 ).fetchone()[0] == 0
 print("every plate processed, none before it arrived")
+```
+
+Every sample that arrived has exactly one well record — no plate was half-processed, and no plate
+was sized against the labware instead of its worklist:
+
+```{python}
+#| label: cell-cell-invariant-count
+arrived_samples = sum(
+    len(json.loads(concs))
+    for (concs,) in db.execute("SELECT concs FROM plates")
+)
+recorded = db.execute("SELECT COUNT(*) FROM wells").fetchone()[0]
+
+assert arrived_samples == recorded
+print(f"{recorded} samples arrived, {recorded} recorded")
+
+print("per plate:", [
+    n for (n,) in db.execute(
+        "SELECT COUNT(*) FROM wells GROUP BY plate ORDER BY plate"
+    )
+])
 ```
 
 Every well reached target or was flagged:
