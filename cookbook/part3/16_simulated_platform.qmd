@@ -114,14 +114,21 @@ arrivals ──► input stacker ──► liquid handler ──► output stack
              (plate hotel)      (dilute to target)
 ```
 
-Nothing about that needs a scheduler. There is one instrument and one queue, and the only decisions
-are per-well arithmetic. What it does need is somewhere to record what happened, and a way to run
-several hours of arrivals in a fraction of a second.
+Three pieces of the platform are in that diagram, and only one of them pipettes. The arrival stream
+stands in for whatever runs upstream — an extraction cell, a quantification step, an operator with a
+trolley — reduced to the two things this cell needs from it: when a plate shows up, and what is in
+it. The stackers are the interface to the rest of the platform on either side, and as the last
+section shows, the input stacker decides more about how this cell behaves than any of the code does.
+
+What none of it needs is a scheduler. The decisions here are per-well arithmetic, and the plate that
+runs next is whichever one the gripper can reach. What the cell does need is somewhere to record
+what happened, and a way to run several hours of arrivals in a fraction of a second.
 
 ### Build the cell
 
-The STAR's iSWAP moves the plates, so transport and pipetting are the same instrument — there is no
-second machine to model.
+The STAR's iSWAP moves the plates, so transport and pipetting contend for one instrument: the arm
+cannot fetch the next plate while the head is dispensing. Everything else in the cell — carrier,
+trough, tips, both stackers — is passive labware with no backend behind it.
 
 ```{python}
 #| label: cell-cell-deck
