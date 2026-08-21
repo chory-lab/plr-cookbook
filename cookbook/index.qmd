@@ -12,7 +12,7 @@ you may be surprised at how quickly you pick up this material.
 
 Given that this cookbook explains how to control powerful and potentially dangerous machines, the reader acknowledges that
 it is their responsibility to operate these machines only after recieving appropriate training. PyLabRobot, like any other automation
-interface, acts on a model of the world that may not be fully accurate depending on the user's own measurements and instrument calibration. 
+interface, acts on a model of the world that may not be fully accurate and depends on the user's own measurements and instrument calibration. 
 The user must ensure that their instruments are fully calibrated before running a protocol. 
 
 
