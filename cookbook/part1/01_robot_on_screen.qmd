@@ -61,6 +61,48 @@ pumps, and scales — about 15 machine types. See the [workcell recipe](#workcel
 
 ---
 
+## From simulation to hardware {#real-hardware}
+
+The whole point of the frontend/backend split is that **only one line changes** when you move to a
+real machine — the backend.
+
+::: {.callout-tip title="Swap the backend, keep everything else"}
+
+To run the recipe above on a physical Hamilton STAR(let), change line 2 of the imports and line 4
+of the construction; nothing else moves:
+
+```{python}
+#| eval: false
+from pylabrobot.liquid_handling import LiquidHandler
+from pylabrobot.liquid_handling.backends import STARBackend          # <- was ChatterboxBackend
+from pylabrobot.resources import STARLetDeck
+
+lh = LiquidHandler(backend=STARBackend(), deck=STARLetDeck())        # <- was ChatterboxBackend()
+await lh.setup()
+await lh.stop()
+```
+
+Same frontend, same deck, same `setup`/`stop` discipline, same protocol calls. Every pattern you
+learn against the chatterbox transfers unchanged.
+:::
+
+Two things *do* have to happen before `STARBackend()` will connect:
+
+1. **Install the hardware dependencies.** PLR keeps drivers out of the default install:
+   `pip install "pylabrobot[usb]"` for USB machines like the Hamilton (other machines use
+   `[serial]`, `[hid]`, `[ftdi]`, and friends).
+2. **Set up the driver once per computer.** On Windows, use [Zadig](https://zadig.akeo.ie) to bind
+   the device ("ML Star") to `libusbK`; on macOS/Linux, install libusb. This is operating-system
+   plumbing, not Python — do it once and forget it.
+
+The same swap works across the catalogue: every machine type that ships a chatterbox has a real
+counterpart with the same interface — `ThermocyclerChatterboxBackend` → your thermocycler's driver
+backend, `IncubatorChatterboxBackend` → its real backend, and so on. The frontend never knows the
+difference ([chapter 13](../part3/13_record_runs.qmd) exploits this to record runs identically in
+both modes).
+
+---
+
 ## Why everything is `await` {.unnumbered}
 
 Every PLR operation that touches a machine is `async def` — `setup`, `aspirate`, `move_plate`,
