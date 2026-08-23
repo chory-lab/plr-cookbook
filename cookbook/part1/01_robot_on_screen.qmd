@@ -1,6 +1,7 @@
 ---
 title: "Getting a robot on screen"
 ---
+This chapter shows you how to instantiate instrument interfaces in PLR.
 
 ---
 
