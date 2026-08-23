@@ -1,6 +1,8 @@
 ---
 title: "Worklists and data formats"
 ---
+Worklists are lists of source and destination pairs for liquid containers on a robot deck. They are one of the most common
+ways to specify how liquids are transfered in a script.
 
 ## Setup {.unnumbered}
 
