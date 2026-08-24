@@ -197,19 +197,19 @@ chunks, resuming exactly where it left off:
 
 ```{python}
 #| label: cell-streaming-chunk
-worklist = (
-    f"{batch[0].get_identifier()} <- 25 uL"
-    for batch in plate.traverse(1, "top_left", "right", repeat=True)
-)
+wells = (batch[0] for batch in                                  # <1>
+         plate.traverse(1, "top_left", "right", repeat=True))
 
 for _ in range(3):                      # three passes of an 8-channel head
-    chunk = list(itertools.islice(worklist, 8))
-    print("next 8:", chunk)
+    chunk = list(itertools.islice(wells, 8))                    # <2>
+    print("next 8:", [w.get_identifier() for w in chunk])
+    # the real body would be:  await lh.aspirate(chunk, vols=[25] * 8)
 ```
 
-`traverse` yields batches even at `batch_size=1` (hence `batch[0]`), and `islice` pulls exactly the
-next eight rows per pass — the stream's cursor survives across pulls, so nothing counts or indexes
-by hand.
+1. `traverse` yields batches even at `batch_size=1`, so `batch[0]` unwraps each to the well itself —
+   a stream of wells, which is what the pipetting call takes.
+2. `islice` pulls exactly the next eight, and the stream's cursor survives across pulls, so nothing
+   counts or indexes by hand.
 
 ### Dose a plate in replicates
 
