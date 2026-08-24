@@ -11,7 +11,7 @@ This cookbook is intended to give new users an easy way to learn and get started
 you may be surprised at how quickly you pick up this material.
 
 ## What is this Cookbook For?
-This cookbook is to explain some basic patterns and workflow compositions that can help you write PyLabRobot code. The principles of logic
+This cookbook is meant to explain some basic patterns and workflow compositions that can help you write PyLabRobot code. The principles of logic
 and orchestration extend beyond PyLabRobot, but PyLabRobot is arguably one of the most efficient ways of implementing these patterns in the world
 of lab automation. In fact, many labs spend thousands of dollars on software to address the same problems we take on succinctly in this book.
 
