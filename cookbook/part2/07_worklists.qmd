@@ -33,6 +33,8 @@ tips[0] = tip_rack = opentrons_96_filtertiprack_200ul(name="tips")
 
 set_volume_tracking(True)          # <1>
 source["A1"][0].set_volume(2000)
+for well_name in ("C7", "A2", "B3", "E8"):   # sources for data/transfers.csv
+    source[well_name][0].set_volume(500)
 
 scratch = pathlib.Path(tempfile.mkdtemp(prefix="cookbook_worklist_"))   # <2>
 print("scratch dir:", scratch)
@@ -40,9 +42,10 @@ print("scratch dir:", scratch)
 
 1. Volume tracking is off by default. The results recipe reads well volumes back out, which only
    reports anything once it is on.
-2. Recipes write their files to a throwaway directory, so the notebook leaves nothing behind.
-   Real runs use a timestamped run directory instead — [chapter 13](../part3/13_record_runs.qmd#run-data)
-   makes that the rule.
+2. Recipes write their *outputs* to a throwaway directory, so the notebook leaves nothing behind.
+   Checked-in *inputs* — like this chapter's worklist — live in the cookbook's `data/` directory
+   instead. Real runs use a timestamped run directory for both —
+   [chapter 13](../part3/13_record_runs.qmd#run-data) makes that the rule.
 
 ::: {.column-margin}
 **Python you need here**
@@ -59,56 +62,129 @@ module reads and writes it, and `pathlib.Path` handles paths without string surg
 
 Take a spreadsheet of transfers — one row per transfer — and execute it.
 
+The worklist ships with the cookbook at [`data/worklist.csv`](../data/worklist.csv); in real life
+it comes from a spreadsheet, a scheduler, or a LIMS export:
+
 ```{python}
-#| label: cell-csv-write
+#| label: cell-csv-read
 #| output: false
-worklist = scratch / "worklist.csv"
-with open(worklist, "w", newline="") as f:                   # <1>
-    writer = csv.writer(f)
-    writer.writerow(["target", "volume"])
-    for col in range(1, 5):
-        writer.writerow([f"B{col}", 25])
+worklist = pathlib.Path("../data/worklist.csv")              # <1>
+
+with open(worklist, newline="") as f:                        # <2>
+    rows = list(csv.DictReader(f))
+
+print(worklist.read_text().strip())                          # <3>
 ```
 
-1. Ordinary CSV: a header, then one transfer per row. Any spreadsheet exports this.
+1. The file lives next door to this chapter, under the cookbook's shared `data/` directory.
+2. `csv.DictReader` gives each row as a dict keyed by the header — `{"target": "B1", "volume": "25"}`.
+   Values are strings, so they are cast where they are used.
+3. Always look at a worklist before running it — the cheapest possible validation.
 
-The file that produces:
-
-```{python}
-#| label: cell-csv-excerpt
-#| echo: false
-print(worklist.read_text().strip())
-```
-
-Reading it back and driving the robot from it:
+All four transfers draw from **one source well**, `source["A1"]`, which changes how the run should
+be driven. One tip per transfer works, but wastes the head: with tips on channels 0–3 you can pick
+up once, aspirate the four volumes *in series* off the single source well, and dispense them *in
+parallel*, one channel per target:
 
 ```{python}
 #| label: cell-csv-run
 #| output: false
-with open(worklist, newline="") as f:                        # <1>
-    rows = list(csv.DictReader(f))
+n = len(rows)
+assert n <= 8                                                # <1>
+tip_spots = [tip_rack[f"A{i + 1}"][0] for i in range(n)]     # <2>
+wells = [target[row["target"]][0] for row in rows]
+vols = [float(row["volume"]) for row in rows]
 
-tip = 0                                                      # <2>
-for row in rows:
-    await lh.pick_up_tips(tip_rack[tip])
-    await lh.transfer(
-        source["A1"][0],
-        targets=[target[row["target"]][0]],
-        target_vols=[float(row["volume"])],
-    )
-    await lh.drop_tips(tip_rack[tip])
-    tip += 1
+await lh.pick_up_tips(tip_spots)                             # <3>
+for i, vol in enumerate(vols):                               # <4>
+    await lh.aspirate(source["A1"], vols=[vol], use_channels=[i])
+await lh.dispense(wells, vols=vols)                          # <5>
+await lh.drop_tips(tip_spots)
 ```
 
-1. `csv.DictReader` gives each row as a dict keyed by the header — `{"target": "B1", "volume": "25"}`.
-   Values are strings, so they are cast where they are used.
-2. The driver loop: one tip per transfer, `lh.transfer` per row.
+1. Hard cap: one tip per channel on an 8-channel head. Longer worklists get chunked — see
+   `#batching` below.
+2. Tip spots are consumed left to right; four transfers need four adjacent spots.
+3. One pickup for the whole batch, not one per transfer.
+4. Four aspirations out of A1, **in series** — four channels cannot occupy one well at once.
+   `aspirate` takes a *list* of wells (`source["A1"]` is the one-element list holding A1) and
+   `use_channels=[i]` pins each draw to the tip picked up on channel *i*.
+5. The four dispenses happen **in parallel**, one channel per target well.
 
 `pandas` is not required. The stdlib `csv` module reads a worklist with no third-party
 dependency, and either way the seam produces the same thing: a list of `(target, volume)` pairs.
 
 **See also:** `#validate` runs checks on these rows *before* the loop; `#batching` reorders them
-for multi-channel heads.
+for multi-channel heads when the targets — unlike this recipe's shared source — come from
+different sources too.
+
+:::
+
+---
+
+## One source per row {#per-row-sources}
+
+::: {.recipe}
+
+Real worklists rarely share one source. Here every row is an independent source→target pair, drawn
+from a second checked-in file — [`data/transfers.csv`](../data/transfers.csv) — whose rows are
+deliberately in no useful order:
+
+```{python}
+#| label: cell-transfers-read
+#| output: false
+transfers_path = pathlib.Path("../data/transfers.csv")
+
+with open(transfers_path, newline="") as f:
+    pair_rows = list(csv.DictReader(f))
+
+print(transfers_path.read_text().strip())
+```
+
+The naive driver treats each row as its own mini-protocol: pick up a tip, transfer, drop the tip —
+four times over.
+
+```{python}
+#| label: cell-transfers-naive
+#| output: false
+for row in pair_rows:
+    await lh.pick_up_tips(tip_rack["A1"])
+    await lh.transfer(
+        source[row["source"]][0],
+        targets=[target[row["target"]][0]],
+        target_vols=[float(row["volume"])],
+    )
+    await lh.drop_tips(tip_rack["A1"])
+```
+
+With distinct sources there is no shared-well serialization to exploit, but the pickups can still
+be batched: pick up one tip per channel up front and run the whole worklist through one
+`aspirate`/`dispense` pair.
+
+```{python}
+#| label: cell-transfers-batched
+#| output: false
+srcs = [source[row["source"]][0] for row in pair_rows]
+dsts = [target[row["target"]][0] for row in pair_rows]
+vols = [float(row["volume"]) for row in pair_rows]
+tips = [tip_rack[f"A{i + 1}"][0] for i in range(len(pair_rows))]
+
+await lh.pick_up_tips(tips)                          # <1>
+await lh.aspirate(srcs, vols=vols)                   # <2>
+await lh.dispense(dsts, vols=vols)                   # <3>
+await lh.drop_tips(tips)
+```
+
+1. Same cap as before: at most eight tips, one per channel.
+2. One aspiration per row, in file order — the channels cannot share a move because every source
+   is a different well.
+3. One dispense per row. Notice *the order the head visits wells in*: C7, A2, B3, E8 is exactly the
+   file's order, and it zig-zags across the deck because we never asked it to do better.
+
+That last point matters. The rows arrive in whatever order the spreadsheet was in; run as-is, the
+head traverses the deck per row. Sort the pairs spatially first — sources by column, targets
+riding along with their source — and the same aspirate/dispense pair sweeps instead of zig-zags.
+That is precisely what `sort_by_xy_and_chunk_by_x` ([`#batching`](#batching)) automates.
 
 :::
 
@@ -207,6 +283,9 @@ patterns on well selections.
 
 You have an 8-channel head. Turn a one-row-per-well worklist into batches your channels can do in
 parallel.
+
+This is the tool the [unsorted per-row worklist](#per-row-sources) above was pointing at: its rows
+zig-zag because the file order is arbitrary. Sort spatially and the head sweeps column by column.
 
 ```{python}
 #| label: cell-batching
