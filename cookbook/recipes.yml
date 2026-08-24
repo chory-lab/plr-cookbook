@@ -156,20 +156,10 @@
   chapter: 7
   apis: "csv, csv.DictReader, lh.transfer, worklist"
 
-- title: "Validate before moving a channel"
-  path: part2/07_worklists.qmd#validate
-  chapter: 7
-  apis: "validation, get_free_volume, worklist"
-
 - title: "Group rows into channel-parallel batches"
   path: part2/07_worklists.qmd#batching
   chapter: 7
   apis: "sort_by_xy_and_chunk_by_x, batching, multi-channel"
-
-- title: "Write results back out"
-  path: part2/07_worklists.qmd#results
-  chapter: 7
-  apis: "csv, pathlib, get_used_volume, plate map"
 
 - title: "Pick a format"
   path: part2/07_worklists.qmd#formats
