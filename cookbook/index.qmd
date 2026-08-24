@@ -24,6 +24,9 @@ it is their responsibility to operate these machines only after recieving approp
 interface, acts on a model of the world that may not be fully accurate and depends on the user's own measurements and instrument calibration. 
 The user must ensure that their instruments are fully calibrated before running a protocol. 
 
+## Why PyLabRobot?
+PyLabRobot is popular in lab automation for several reasons. Most interfaces to automation hardware are built on deprecated frameworks such as ActiveX and have little to no public documentation. Companies even charge their customers money for software interfaces to hardware they already own. This has resulted in a highly fractured and inefficient software ecosystem for lab automation. Tasks that would seem basic in a normal software context often require paying a great deal of money in lab automation because of the highly idiosyncratic nature of the software. PyLabRobot overcomes these myriad difficulties by building the interface layer from the ground up on the basis of good software design and open source contributions. This has resulted in a highly scalable and comprehensible architecture that many find to be far easier to use than the tools of the proprietary ecosystem. This is unsurprising given how effective open source collaboration is in the world of software development - almost all of the most widely used software products in the world today are open source.
+
 ## How to read this
 
 - **[Recipe index](recipes.qmd)** — every recipe in the book, indexed by task and searchable by
