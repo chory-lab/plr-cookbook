@@ -9,7 +9,8 @@ ways to specify how liquids are transfered in a script.
 ```{python}
 #| label: cell-setup
 #| output: false
-import csv, pathlib, tempfile
+import csv, itertools, pathlib, tempfile
+from operator import itemgetter
 
 from pylabrobot.liquid_handling import LiquidHandler
 from pylabrobot.liquid_handling.backends import LiquidHandlerChatterboxBackend
@@ -42,8 +43,10 @@ print("scratch dir:", scratch)
 ::: {.column-margin}
 **Python you need here**
 
-`csv` and `pathlib` are the two imports of this chapter. A worklist is plain data: the `csv`
-module reads and writes it, and `pathlib.Path` handles paths without string surgery.
+`csv`, `pathlib`, and `itertools` are the imports of this chapter. A worklist is plain data: the
+`csv` module reads and writes it, `pathlib.Path` handles paths without string surgery, and
+`itertools.groupby` (with `operator.itemgetter` as its key) collapses repeated rows into one robot
+move.
 :::
 
 ---
@@ -91,7 +94,7 @@ parallel*, one channel per target:
 #| output: false
 n = len(rows)
 assert n <= 8                                                # <1>
-tip_spots = [tip_rack[f"A{i + 1}"][0] for i in range(n)]     # <2>
+tip_spots = tip_rack.row("A")[:n]                            # <2>
 wells = [target[row["target"]][0] for row in rows]
 vols = [float(row["volume"]) for row in rows]
 
@@ -104,7 +107,10 @@ await lh.drop_tips(tip_spots)
 
 1. Hard cap: one tip per channel on an 8-channel head. Longer worklists get chunked — see
    `#batching` below.
-2. Tip spots are consumed left to right; four transfers need four adjacent spots.
+2. `row("A")` is the rack's top row as a list of spots ([chapter 5](../part1/05_indexing.qmd#rows-cols));
+   the slice takes the first `n`. Building the identifiers instead —
+   `[tip_rack[f"A{i + 1}"][0] for i in range(n)]` — says the same thing in more characters and
+   stops being true at `A13`.
 3. One pickup for the whole batch, not one per transfer.
 4. Four aspirations out of A1, **in series** — four channels cannot occupy one well at once.
    `aspirate` takes a *list* of wells (`source["A1"]` is the one-element list holding A1) and
@@ -114,8 +120,8 @@ await lh.drop_tips(tip_spots)
 `pandas` is not required. The stdlib `csv` module reads a worklist with no third-party
 dependency, and either way the seam produces the same thing: a list of `(target, volume)` pairs.
 
-**See also:** `#pairing` covers the row→channel mapping; `#batching` reorders rows for
-multi-channel heads.
+**See also:** [`#pairing`](#pairing) gives the row→arguments mapping above a single name;
+[`#batching`](#batching) reorders rows for multi-channel heads.
 
 :::
 
@@ -176,7 +182,7 @@ be batched: pick up one tip per channel up front and run the whole worklist thro
 srcs = [source[row["source"]][0] for row in pair_rows]
 dsts = [target[row["target"]][0] for row in pair_rows]
 vols = [float(row["volume"]) for row in pair_rows]
-tips = [tip_rack[f"A{i + 1}"][0] for i in range(len(pair_rows))]
+tips = tip_rack.row("A")[:len(pair_rows)]
 
 await lh.pick_up_tips(tips)                          # <1>
 await lh.aspirate(srcs, vols=vols)                   # <2>
@@ -199,53 +205,237 @@ That is precisely what `sort_by_xy_and_chunk_by_x` ([`#batching`](#batching)) au
 
 ---
 
+## Aspirate once per source, not once per row {#group-sources}
+
+::: {.recipe}
+
+Reagent-addition worklists repeat their sources: a dozen rows, two or three reagents. Driven row by
+row, each one costs its own trip to the source well. Group the rows by source and each reagent is
+picked up **once**.
+
+The file — [`data/reagents.csv`](../data/reagents.csv) — is six rows drawing on two sources,
+interleaved the way a spreadsheet accumulates them:
+
+```csv
+source,target,volume
+A1,B1,20
+A1,B2,20
+A2,C1,15
+A1,B3,20
+A2,C2,15
+A1,B4,20
+```
+
+```{python}
+#| label: cell-group-sources
+#| output: false
+with open(pathlib.Path("../data/reagents.csv"), newline="") as f:
+    reagent_rows = list(csv.DictReader(f))
+
+by_source = itemgetter("source")                                        # <1>
+
+await lh.pick_up_tips(tip_rack["A1"])
+for src, group in itertools.groupby(sorted(reagent_rows, key=by_source), key=by_source):
+    group = list(group)                                                 # <2>
+    total = sum(float(row["volume"]) for row in group)
+    assert total <= 200                                                 # <3>
+
+    await lh.aspirate(source[src], vols=[total], use_channels=[0])      # <4>
+    for row in group:
+        await lh.dispense(target[row["target"]], vols=[float(row["volume"])], use_channels=[0])
+await lh.drop_tips(tip_rack["A1"])
+```
+
+1. `operator.itemgetter("source")` is `lambda row: row["source"]` without the lambda — one key
+   function, used twice, for the sort and for the grouping. Writing it once is what keeps the two
+   in step: `groupby` batches only **consecutive** equal keys, so an unsorted `groupby` on this
+   file yields *three* groups (A1, A2, A1) and quietly undoes the saving.
+2. `groupby` hands out a shared iterator that is consumed when the next group is pulled. `list()`
+   it before touching the rows twice — here, once for `total` and once for the dispenses.
+3. The cap is the tip, not the worklist: 200 µL filter tips hold 200 µL. Longer runs of the same
+   source split into tip-sized chunks.
+4. **Six rows, two aspirations.** The row-by-row driver in
+   [`#per-row-sources`](#per-row-sources) would make six, plus six returns to the source well.
+
+**Gotcha: the last dispense out of a shared aspiration is the least accurate.**
+
+One draw serving four dispenses means the fourth is pushed out of a nearly empty tip. Standard
+practice is to aspirate a little extra and discard the remainder, which is why this pattern belongs
+to reagent addition — where a percent matters little — and not to a serial dilution, where it
+matters a lot.
+
+**See also:** [`#batching`](#batching) groups by *position* to shorten the head's travel; this
+recipe groups by *source* to cut the number of aspirations. They compose — sort within a group.
+
+:::
+
+---
+
+## Turn rows into call arguments {#pairing}
+
+::: {.recipe}
+
+`aspirate` and `dispense` want parallel lists — wells here, volumes there. A worklist is the
+transpose of that: one row per transfer, all three fields together. Name the row→arguments mapping
+once, then turn the rows a quarter turn:
+
+```{python}
+#| label: cell-pairing
+#| output: false
+def as_call(row):                                            # <1>
+    """One worklist row -> (source well, target well, volume)."""
+    return source[row["source"]][0], target[row["target"]][0], float(row["volume"])
+
+srcs, dsts, vols = zip(*map(as_call, pair_rows))             # <2>
+```
+
+1. The mapping from a row's strings to the objects a call takes, stated once and given a name. The
+   three separate comprehensions in [`#per-row-sources`](#per-row-sources) spread this same mapping
+   across three lines and repeat the `row[...]` scaffolding on each; when a column is added or a
+   cast changes, this is one edit instead of three that must stay in step.
+2. `zip(*rows)` transposes: rows in, columns out. `resources` is typed `Sequence`, so the tuples
+   `zip` returns go straight into a call — `vols` is annotated `List` and works the same,
+   `list(vols)` if a type checker objects.
+
+Both spellings walk the rows; the win is not speed on four rows, it is that the row shape is
+written down in one place.
+
+The reverse direction has a failure mode. Whenever wells and volumes come from *different* places —
+two files, or one column that was filtered — `zip` silently stops at the shorter one and you get
+fewer operations than the worklist asked for, with no error:
+
+```{python}
+#| label: cell-pairing-strict
+rows = [{"target": "B1", "volume": "30"}, {"target": "B2", "volume": ""},    # <2>
+        {"target": "B3", "volume": "30"}]
+
+wells = [target[row["target"]][0] for row in rows]
+vols = [float(row["volume"]) for row in rows if row["volume"]]                # <3>
+
+print("plain zip:", len(list(zip(wells, vols))), "transfers from", len(rows), "rows")
+try:
+    list(zip(wells, vols, strict=True))                                       # <4>
+except ValueError as e:
+    print("strict=True:", e)
+```
+
+2. A blank volume — the everyday form of a bad worklist row.
+3. The filter drops the blank row from `vols` but not from `wells`. The lists are now ragged.
+4. `strict=True` raises instead of truncating. Two transfers instead of three is a plate that looks
+   finished and is not; the exception arrives **before** a channel moves, which is the whole point
+   of catching it here rather than in [chapter 10](../part2/10_errors.qmd#catch-recoverable).
+
+**Where the index still matters.** `enumerate` earns its keep in exactly one place in this chapter:
+[`#csv-run`](#csv-run), where `i` becomes `use_channels=[i]` and pins a serialized draw to its own
+tip. When a call takes whole lists there is no index to carry, and the loop disappears with it.
+Past eight rows, the wrap-around is `i % 8` — the periodicity arithmetic from
+[chapter 5](../part1/05_indexing.qmd#index-arithmetic), which `itertools.cycle` and
+`itertools.islice` ([#streaming](../part1/05_indexing.qmd#streaming)) already hide.
+
+**See also:** `zip(*...)` also inverts — `list(zip(wells, vols))` rebuilds rows for writing a
+result CSV back out.
+
+:::
 
 
 ---
 
-## Pair a worklist with channels {#pairing}
+## Compute volumes from a plate map {#plate-map}
 
 ::: {.recipe}
 
-`enumerate` turns "row number" into "channel number" — the pairing every batched driver above
-relies on.
+The volumes a run needs are rarely in the worklist. They are computed from something else — a
+quantification, a normalization target, a dilution factor — held in a second file keyed by well.
+[`data/plate_map.csv`](../data/plate_map.csv) is that file, one row per sample:
 
-```{python}
-#| label: cell-pairing
-for i, row in enumerate(pair_rows):                      # <1>
-    print(f"channel {i}: {row['source']} -> {row['target']}")
+```csv
+well,sample_id,conc
+B1,S001,45.0
+D4,S002,20.0
+A5,S003,80.0
+C2,S004,31.5
 ```
 
-1. `enumerate` supplies the channel index alongside the row. With four rows on an 8-channel head,
-   channels 0–3 are simply `i` — pin each draw to its own tip with `use_channels=[i]`, as the
-   shared-source and per-row recipes do.
-
-Past eight rows you run out of head. The modulo operator wraps the assignment back onto the
-channels you have — row 8 lands on channel 0 again, row 9 on channel 1:
+The job: for every row of `transfers.csv`, look up the target well's concentration and work out how
+much buffer dilutes 20 µL of it to 20 ng/µL. Written as the loop it looks like:
 
 ```{python}
-#| label: cell-pairing-modulo
-long_rows = pair_rows * 3                                # <2>
-for i, row in enumerate(long_rows):
-    print(f"row {i:>2} -> channel {i % 8}: {row['source']} -> {row['target']}")
+#| label: cell-plate-map-naive
+#| output: false
+with open(pathlib.Path("../data/plate_map.csv"), newline="") as f:
+    plate_map = list(csv.DictReader(f))
+
+TARGET, V_SAMPLE = 20.0, 20.0
+
+vols = []
+for row in pair_rows:
+    for entry in plate_map:                                   # <1>
+        if entry["well"] == row["target"]:
+            conc = float(entry["conc"])
+            break
+    vols.append(round(V_SAMPLE * (conc / TARGET - 1), 1))      # <2>
 ```
 
-2. `i % 8` cycles through 0–7 forever — the same arithmetic
-   [chapter 5](../part1/05_indexing.qmd#index-arithmetic) uses to walk grids and
-   [#streaming](../part1/05_indexing.qmd#streaming) hides inside `itertools.cycle`. Which *tip*
-   each row consumes is a separate question: a fresh tip per transfer still costs a pickup per
-   row, or chunked pickups like the recipes above.
+1. A scan of the whole map for every row — four rows against four samples is sixteen comparisons,
+   a 96-row worklist against a 96-well map is 9,216. The cost grows as the product of the two files.
+2. `append` in a loop: three lines of bookkeeping around one line of arithmetic, and `conc` leaks
+   out of the inner loop, so a target missing from the map silently reuses the previous row's
+   concentration instead of failing.
 
-Modulo tells you *which* channel a row lands on; the streaming patterns from
-[chapter 5](../part1/05_indexing.qmd#streaming) tell you *when*: `itertools.cycle` rotates several
-source wells so none drains first, `itertools.islice` pulls an unbounded worklist in
-channel-sized bites, and the tip-fit batcher pairs each transfer with a rack that fits it.
-Reaching for those instead of hand-rolled counters is the difference between a driver loop and a
-scheduler.
+Both problems go away at once. A **dict comprehension** builds the lookup in one pass; a **list
+comprehension** states the volume rule as one expression:
 
-**See also:** `zip(*rows)` transposes rows into the `(resources, vols)` shape that `aspirate`
-wants ([chapter 4](../part1/04_pipetting.qmd#basics)); `zip(..., strict=True)` raises when a
-worklist row is missing its volume instead of silently producing fewer operations.
+```{python}
+#| label: cell-plate-map
+conc = {row["well"]: float(row["conc"]) for row in plate_map}          # <1>
+
+vols = [round(V_SAMPLE * (conc[row["target"]] / TARGET - 1), 1)        # <2>
+        for row in pair_rows]
+
+print(dict(zip((row["target"] for row in pair_rows), vols)))
+```
+
+1. One pass over the map, then constant-time lookups — the two files are read once each instead of
+   once per pairing. The `for row in ... if ...` scan above is the shape that turns a fast script
+   into a slow one on a full plate, and a dict is the usual fix.
+2. The rule reads as the rule: *this much buffer, for every row*. `conc[...]` raises `KeyError` on a
+   target the map does not know — the loud failure the `break` version turned into a silent one.
+
+A comprehension **filters** in the same breath. Sample D4 is already at target, so its volume is
+zero, and a channel that dispenses nothing should not be in the operation at all:
+
+```{python}
+#| label: cell-plate-map-filter
+#| output: false
+plan = [(target[row["target"]][0], vol)                                # <3>
+        for row, vol in zip(pair_rows, vols, strict=True) if vol > 0]
+
+wells, buffer_vols = zip(*plan)                                        # <4>
+
+spots = tip_rack.row("B")[:len(wells)]
+await lh.pick_up_tips(spots)
+for i, vol in enumerate(buffer_vols):                                  # <5>
+    await lh.aspirate(source["A1"], vols=[vol], use_channels=[i])
+await lh.dispense(wells, vols=list(buffer_vols))
+await lh.drop_tips(spots)
+```
+
+3. The `if` clause drops the zero-volume row before it becomes a channel. Filtering after the fact —
+   building all four operations and then removing one — means keeping two lists in step by index,
+   which is the bug `strict=True` exists to catch.
+4. The same transpose as [`#pairing`](#pairing): pairs in, parallel lists out.
+5. Buffer comes from one shared well, so the draws serialize and the index becomes `use_channels`
+   — the [`#csv-run`](#csv-run) pattern, and the one place an index still earns its keep. Three
+   channels cannot share a well: `[source["A1"][0]] * 3` in a single call raises
+   `ValueError: Resource is too small to space channels`.
+
+**Where a comprehension is the wrong tool.** When the body does I/O or moves a channel — `await`,
+a `db.execute`, a `log.info` — it is a loop, and writing it as a comprehension for its own sake
+buys nothing and hides the effect. Comprehensions are for turning data into other data; the awaits
+above are deliberately still a loop.
+
+**See also:** the same dict-as-index trick joins a run's results back onto its worklist for
+[chapter 13](../part3/13_record_runs.qmd#run-data)'s run record.
 
 :::
 
@@ -292,10 +482,6 @@ not from the file length.
 [chapter 2](../part1/02_standard_labware.qmd#query), all in `resources/utils.py`.
 
 :::
-
----
-
-
 
 ---
 
@@ -347,6 +533,16 @@ is restated at system level in [chapter 13](../part3/13_record_runs.qmd#logging)
 
 - PLR ships no worklist support. The seam is plain `csv` + `pathlib` + `lh.transfer`.
 - `csv.DictReader` gives rows as dicts; values are strings, cast before arithmetic.
-- `enumerate` pairs row `i` with channel `i`; `i % 8` wraps longer worklists back onto the head.
+- `zip(*rows)` transposes a worklist into the parallel lists a call takes; write the row→arguments
+  mapping once as a named function. `strict=True` raises on a ragged worklist before a channel
+  moves.
+- `groupby` on the source well turns one aspiration per row into one per reagent. Sort by the key
+  first, or the grouping silently does nothing.
+- A **dict comprehension** is how two files get joined: one pass to build `{well: value}`, then
+  constant-time lookups instead of rescanning the map for every row.
+- A **list comprehension** states a volume rule as one expression, and its `if` clause drops the
+  rows that should never become channels. When the body awaits, logs, or writes, keep it a loop.
+- `enumerate` is for the case where the index *is* an argument (`use_channels=[i]`); when the call
+  takes whole lists, the loop goes away.
 - `sort_by_xy_and_chunk_by_x(targets, max_chunk_size)` turns wells into channel-parallel batches.
 - **CSV for worklists, JSON for state, log lines for audit.** Three jobs, three formats.

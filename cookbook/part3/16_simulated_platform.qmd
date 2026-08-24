@@ -350,8 +350,8 @@ def load_arrivals(now):
     for plate_id, concs in rows:
         plate = cor_96_wellplate_360uL_Fb(name=plate_id)
 
-        for i in range(len(json.loads(concs))):          # <1>
-            plate[i][0].set_volume(V_SAMPLE)
+        for well in plate[: len(json.loads(concs))]:     # <1>
+            well.set_volume(V_SAMPLE)
 
         inp.assign_child_resource(plate)
         db.execute(
@@ -361,8 +361,10 @@ def load_arrivals(now):
     db.commit()
 ```
 
-1. Only the occupied wells get a volume. The rest of the plate is empty, and the volume tracker will
-   say so if the protocol reaches for one.
+1. `plate[:n]` is the integer-slice form of the [selection grammar](../part1/05_indexing.qmd#select) —
+   the first `n` wells in fill order, already unwrapped, so the body reads `well.set_volume(...)`
+   rather than indexing back into the plate. Only the occupied wells get a volume; the rest are
+   empty, and the volume tracker will say so if the protocol reaches for one.
 
 One plate through the cell. `handle_errors` is the wrapper from
 [chapter 15](15_compose_behaviour.qmd#recovery). Two things vary per plate now — how many samples it
@@ -464,7 +466,7 @@ records the consequence:
 #| label: cell-cell-run
 #| output: false
 clock = SimClock()
-column = 1
+tip_columns = (rack.column(c) for c in range(rack.num_items_x))   # <1>
 
 while True:
     load_arrivals(clock.now())
@@ -477,10 +479,10 @@ while True:
         if nxt is None:
             break
 
-        clock.advance_to(nxt)                                    # <1>
+        clock.advance_to(nxt)                                    # <2>
         continue
 
-    plate = inp.get_top_item()                                   # <2>
+    plate = inp.get_top_item()                                   # <3>
     arrived, concs = db.execute(
         "SELECT arrived, concs FROM plates WHERE plate=?",
         (plate.name,),
@@ -489,20 +491,18 @@ while True:
     started = clock.now()
     await lh.move_plate(plate, carrier[1])
 
-    rows = await normalize(
-        plate, json.loads(concs), rack[f"A{column}:H{column}"]
-    )
-    column += 1
+    samples = json.loads(concs)
+    rows = await normalize(plate, samples, next(tip_columns))     # <4>
 
     await lh.move_plate(plate, out)
     clock.advance(SERVICE)
 
-    for i, ((vol, flag), conc) in enumerate(zip(rows, json.loads(concs))):
+    for i, ((vol, flag), conc) in enumerate(zip(rows, samples)):
         db.execute(
             "INSERT INTO wells VALUES (?,?,?,?,?,?)",
             (
                 plate.name, i, conc, vol, flag,
-                quantify(conc * V_SAMPLE / (V_SAMPLE + vol)),    # <3>
+                quantify(conc * V_SAMPLE / (V_SAMPLE + vol)),    # <5>
             ),
         )
 
@@ -516,9 +516,16 @@ while True:
     )
 ```
 
-1. No sleeping. Idle time is a jump.
-2. `get_top_item()` is the only plate the gripper can reach.
-3. The achieved concentration is what the dilution actually produced, seen through a quantification
+1. One tip column per plate, as a stream. A counter (`column = 1` ... `column += 1`) and an
+   identifier built from it (`rack[f"A{column}:H{column}"]`) would do the same thing here and go
+   quietly wrong at the thirteenth plate; the generator raises `StopIteration` when the rack is
+   spent, which is the true statement — this cell has run out of tips.
+2. No sleeping. Idle time is a jump.
+3. `get_top_item()` is the only plate the gripper can reach.
+4. `next()` takes the next column. `rack.column(c)` is the axis view from
+   [chapter 5](../part1/05_indexing.qmd#rows-cols) — the same eight spots as `"A1:H1"`, without
+   spelling out an identifier.
+5. The achieved concentration is what the dilution actually produced, seen through a quantification
    with the noise from the first recipe.
 
 ```{python}

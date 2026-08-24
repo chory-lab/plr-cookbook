@@ -215,35 +215,29 @@ def with_reagent_refill(source, capacity):
     def decorator(fn):
         @functools.wraps(fn)
         async def wrapper(lh, volume, *args, **kwargs):
-            mounted = [
-                (i, tip)
-                for i, tip in enumerate(lh.get_mounted_tips())      # <1>
-                if tip is not None
-            ]
-
-            if not mounted:                                          # <2>
+            mounted = lh.get_mounted_tips()                          # <1>
+            if not any(mounted):                                     # <2>
                 raise RuntimeError("no tips mounted")
 
             refill = [
                 (channel, capacity - tip.tracker.get_used_volume())
-                for channel, tip in mounted
-                if tip.tracker.get_used_volume() < volume            # <3>
+                for channel, tip in enumerate(mounted)               # <3>
+                if tip is not None and tip.tracker.get_used_volume() < volume
             ]
 
             if refill:
-                channels = [channel for channel, _ in refill]
-                top_ups = [amount for _, amount in refill]
+                channels, top_ups = zip(*refill)                     # <4>
 
                 protocol_log.info(
                     "re-aspirating reagent from %s on channels %s",
                     source.parent.name,
-                    channels,
+                    list(channels),
                 )
 
                 await lh.aspirate(
                     [source] * len(channels),
-                    vols=top_ups,
-                    use_channels=channels,                            # <4>
+                    vols=list(top_ups),
+                    use_channels=list(channels),                     # <5>
                 )
 
             return await fn(lh, volume, *args, **kwargs)
@@ -252,16 +246,21 @@ def with_reagent_refill(source, capacity):
     return decorator
 ```
 
-1. `get_mounted_tips()` reports the tips in channel order. `enumerate` keeps the channel index
-   attached to each tip, so a refill can address the exact channels that own tips rather than
-   assuming the contiguous block 0–7. It relies on tip tracking, enabled in Setup.
+1. `get_mounted_tips()` reports the tips in channel order, with `None` for an empty channel. It
+   relies on tip tracking, enabled in Setup.
 2. A volume check is meaningless with no tips on the head, so fail loudly instead of passing
-   silently.
-3. Each tip's tracker records the liquid in it: `aspirate` adds, `dispense` subtracts. The per-tip
-   volumes need not be equal, so instead of taking a `min()` over all tips, only tips whose tracked
-   volume is below what the next call needs are refilled — each back up to `capacity`. A tip
-   carrying more than the others is left alone.
-4. `use_channels` selects exactly the refilled channels. Repeating the single trough well once per
+   silently. `any()` over the list answers "is anything mounted" without first building a filtered
+   copy of it.
+3. One comprehension answers both questions the refill needs — *which channels own a tip*, and
+   *which of those are low* — and `enumerate` keeps the channel index attached, so the refill
+   addresses the exact channels rather than assuming the contiguous block 0–7. Each tip's tracker
+   records the liquid in it: `aspirate` adds, `dispense` subtracts. The per-tip volumes need not be
+   equal, so rather than a `min()` over all tips, only tips below what the next call needs are
+   refilled — each back up to `capacity`. A tip carrying more than the others is left alone.
+4. `zip(*pairs)` splits the pairs back into two parallel lists — the transpose from
+   [chapter 7](../part2/07_worklists.qmd#pairing), used here in the unpacking direction instead of
+   walking `refill` twice with a comprehension apiece.
+5. `use_channels` selects exactly the refilled channels. Repeating the single trough well once per
    channel is the single-resource idiom from [chapter 4](../part1/04_pipetting.qmd#spread), and
    `vols` must match `use_channels`.
 

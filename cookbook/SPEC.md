@@ -148,10 +148,20 @@ This chapter teaches the seam.
 | Recipe | Anchor | APIs | Notes |
 |---|---|---|---|
 | Drive a run from a CSV | `#csv-run` | `csv`, `lh.transfer` | One row per transfer |
-| Validate before moving a channel | `#validate` | — | Check wells exist, volumes fit, sources have enough. Pure Python |
+| One source per row | `#per-row-sources` | `csv`, `lh.transfer` | Naive per-row driver vs. batched pickups |
+| Aspirate once per source, not once per row | `#group-sources` | `itertools.groupby`, `operator.itemgetter` | One draw per reagent instead of per row |
+| Turn rows into call arguments | `#pairing` | `zip`, `zip(strict=True)` | Transpose rows→columns; ragged worklists fail before a channel moves |
+| Compute volumes from a plate map | `#plate-map` | list/dict comprehensions, `csv` | Join two files by well; comprehension as the `vols` argument |
 | Group rows into channel-parallel batches | `#batching` | `sort_by_xy_and_chunk_by_x` | New in 0.2.2, purpose-built for this |
-| Write results back out | `#results` | `csv`, `pathlib` | Plate maps, run records |
 | Pick a format | `#formats` | — | **CSV for worklists, JSON for state, log lines for audit.** Three jobs, do not mix |
+
+**Not yet written:** `#validate` (check wells exist, volumes fit, sources have enough — pure
+Python) and `#results` (write plate maps and run records back out with `csv` + `pathlib`).
+`#pairing`'s `strict=True` snippet covers only the ragged-row slice of `#validate`.
+
+**Snippet bar for this chapter.** A snippet earns its place by being either measurably faster or
+materially shorter than the obvious alternative — and the recipe says which, against a named
+baseline. Demonstrating that a builtin exists (`enumerate` printing indices) is not enough.
 
 **Must cover:** pandas vs plain `csv`, honestly — a three-column worklist does not need a DataFrame.
 

@@ -416,10 +416,20 @@
   chapter: 5
   apis: "divmod, num_items_y, get_item, column-major, Coordinate, get_absolute_location"
 
-- title: "Pair a worklist with channels"
+- title: "Turn rows into call arguments"
   path: part2/07_worklists.qmd#pairing
   chapter: 7
-  apis: "zip, enumerate, zip strict, vols, use_channels"
+  apis: "zip, zip strict, transpose, enumerate, vols, use_channels"
+
+- title: "Aspirate once per source, not once per row"
+  path: part2/07_worklists.qmd#group-sources
+  chapter: 7
+  apis: "itertools.groupby, sorted, lh.aspirate, lh.dispense, use_channels, multi-dispense"
+
+- title: "Compute volumes from a plate map"
+  path: part2/07_worklists.qmd#plate-map
+  chapter: 7
+  apis: "list comprehension, dict comprehension, csv.DictReader, zip strict, vols, normalization"
 
 - title: "Gripper parameters"
   path: part2/09_moving_labware.qmd#gripper
