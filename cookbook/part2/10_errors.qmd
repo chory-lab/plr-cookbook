@@ -186,7 +186,7 @@ does not catch it. Dispense to waste before dropping, or handle the drop separat
 :::
 
 **See also:** the same rows checked before the run in
-[chapter 7](../part2/07_worklists.qmd#validate).
+[chapter 7](../part2/07_worklists.qmd#per-row-sources).
 
 :::
 

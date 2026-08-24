@@ -16,7 +16,6 @@ from pylabrobot.liquid_handling.backends import LiquidHandlerChatterboxBackend
 from pylabrobot.resources import (
     STARLetDeck, PLT_CAR_L5AC_A00, cor_96_wellplate_360uL_Fb,
     opentrons_96_filtertiprack_200ul, TIP_CAR_288_C00,
-    set_volume_tracking,
 )
 
 lh = LiquidHandler(backend=LiquidHandlerChatterboxBackend(), deck=STARLetDeck())
@@ -31,18 +30,11 @@ tips = TIP_CAR_288_C00(name="tip_carrier")
 lh.deck.assign_child_resource(tips, rails=2)
 tips[0] = tip_rack = opentrons_96_filtertiprack_200ul(name="tips")
 
-set_volume_tracking(True)          # <1>
-source["A1"][0].set_volume(2000)
-for well_name in ("C7", "A2", "B3", "E8"):   # sources for data/transfers.csv
-    source[well_name][0].set_volume(500)
-
-scratch = pathlib.Path(tempfile.mkdtemp(prefix="cookbook_worklist_"))   # <2>
+scratch = pathlib.Path(tempfile.mkdtemp(prefix="cookbook_worklist_"))   # <1>
 print("scratch dir:", scratch)
 ```
 
-1. Volume tracking is off by default. The results recipe reads well volumes back out, which only
-   reports anything once it is on.
-2. Recipes write their *outputs* to a throwaway directory, so the notebook leaves nothing behind.
+1. Recipes write their *outputs* to a throwaway directory, so the notebook leaves nothing behind.
    Checked-in *inputs* — like this chapter's worklist — live in the cookbook's `data/` directory
    instead. Real runs use a timestamped run directory for both —
    [chapter 13](../part3/13_record_runs.qmd#run-data) makes that the rule.
@@ -121,9 +113,8 @@ await lh.drop_tips(tip_spots)
 `pandas` is not required. The stdlib `csv` module reads a worklist with no third-party
 dependency, and either way the seam produces the same thing: a list of `(target, volume)` pairs.
 
-**See also:** `#validate` runs checks on these rows *before* the loop; `#batching` reorders them
-for multi-channel heads when the targets — unlike this recipe's shared source — come from
-different sources too.
+**See also:** `#pairing` covers the row→channel mapping; `#batching` reorders rows for
+multi-channel heads.
 
 :::
 
@@ -205,52 +196,7 @@ That is precisely what `sort_by_xy_and_chunk_by_x` ([`#batching`](#batching)) au
 
 ---
 
-## Validate before moving a channel {#validate}
 
-::: {.recipe}
-
-Check every row of a worklist before a single tip moves.
-
-```{python}
-#| label: cell-validate
-checked = rows + [{"target": "Z9", "volume": "25"}]                 # <1>
-
-errors = []
-for i, row in enumerate(checked, start=1):                         # <2>
-    try:
-        target[row["target"]]                                      # <3>
-    except IndexError as e:
-        errors.append(f"row {i}: {e}")
-        continue
-    if float(row["volume"]) > source["A1"][0].tracker.get_used_volume():   # <4>
-        errors.append(f"row {i}: source has too little liquid")
-
-print("errors:")
-for e in errors:
-    print("  ", e)                                                 # <5>
-```
-
-1. One deliberately bad row: Z9 is not a well on a 96-well plate.
-2. `rows` from the previous recipe — the worklist is a plain list of dicts, so validation is just
-   a loop.
-3. **An unknown identifier raises `IndexError`**, it does not return an empty list:
-   `Item with identifier 'Z9' does not exist on resource 'target'.` The lookup has to be wrapped,
-   not tested for truthiness.
-4. `get_used_volume()` on the source's tracker answers "is there enough liquid to draw" without
-   guessing.
-5. An empty list means go. This is the entire job: cheap, read-only, and it moves no tips.
-
-::: {.callout-warning title="Gotcha: validate the *parsed* worklist, not the file"}
-
-`csv` values are strings — a `"volume"` of `"abc"` sails through `float()` checks only if you cast
-first. Validate the parsed rows (`float(row["volume"])`) so a typo surfaces as a validation error,
-not as a `ValueError` mid-run.
-:::
-
-**See also:** a stricter checker for well IDs can reuse `split_identifier` from
-[chapter 5](../part1/05_indexing.qmd#labels).
-
-:::
 
 ---
 
@@ -258,35 +204,45 @@ not as a `ValueError` mid-run.
 
 ::: {.recipe}
 
-`zip` and `enumerate` are how a list of rows becomes per-channel arguments.
+`enumerate` turns "row number" into "channel number" — the pairing every batched driver above
+relies on.
 
 ```{python}
 #| label: cell-pairing
-plan = [("B1", 25.0), ("B2", 30.0), ("B3", 15.0)]
-
-for i, (well, volume) in enumerate(plan):                 # <1>
-    print(f"channel {i}: {well} <- {volume} uL")
-
-wells, volumes = zip(*plan)                               # <2>
-print("wells:  ", list(wells))
-print("volumes:", list(volumes))
-
-resources = [target[w][0] for w in wells]                 # <3>
-print("ready for aspirate:", len(resources), "resources,", len(volumes), "volumes")
+for i, row in enumerate(pair_rows):                      # <1>
+    print(f"channel {i}: {row['source']} -> {row['target']}")
 ```
 
-1. `enumerate` supplies the channel index alongside the row. It takes `start=` when the first
-   channel is not 0.
-2. `zip(*rows)` transposes: a list of pairs becomes a pair of tuples, which is the shape
-   `aspirate(resources, vols)` wants ([chapter 4](../part1/04_pipetting.qmd#basics)).
-3. `vols` must be a list of the same length as the resources, so building both from one `zip` keeps
-   them aligned by construction.
+1. `enumerate` supplies the channel index alongside the row. With four rows on an 8-channel head,
+   channels 0–3 are simply `i` — pin each draw to its own tip with `use_channels=[i]`, as the
+   shared-source and per-row recipes do.
 
-`zip` stops at the shortest argument, so a worklist with a missing volume silently produces fewer
-operations. `zip(..., strict=True)` raises instead.
+Past eight rows you run out of head. The modulo operator wraps the assignment back onto the
+channels you have — row 8 lands on channel 0 again, row 9 on channel 1:
 
-**See also:** [chapter 5](../part1/05_indexing.qmd#streaming) covers the `itertools` streaming
-patterns on well selections.
+```{python}
+#| label: cell-pairing-modulo
+long_rows = pair_rows * 3                                # <2>
+for i, row in enumerate(long_rows):
+    print(f"row {i:>2} -> channel {i % 8}: {row['source']} -> {row['target']}")
+```
+
+2. `i % 8` cycles through 0–7 forever — the same arithmetic
+   [chapter 5](../part1/05_indexing.qmd#index-arithmetic) uses to walk grids and
+   [#streaming](../part1/05_indexing.qmd#streaming) hides inside `itertools.cycle`. Which *tip*
+   each row consumes is a separate question: a fresh tip per transfer still costs a pickup per
+   row, or chunked pickups like the recipes above.
+
+Modulo tells you *which* channel a row lands on; the streaming patterns from
+[chapter 5](../part1/05_indexing.qmd#streaming) tell you *when*: `itertools.cycle` rotates several
+source wells so none drains first, `itertools.islice` pulls an unbounded worklist in
+channel-sized bites, and the tip-fit batcher pairs each transfer with a rack that fits it.
+Reaching for those instead of hand-rolled counters is the difference between a driver loop and a
+scheduler.
+
+**See also:** `zip(*rows)` transposes rows into the `(resources, vols)` shape that `aspirate`
+wants ([chapter 4](../part1/04_pipetting.qmd#basics)); `zip(..., strict=True)` raises when a
+worklist row is missing its volume instead of silently producing fewer operations.
 
 :::
 
@@ -336,47 +292,7 @@ not from the file length.
 
 ---
 
-## Write results back out {#results}
 
-::: {.recipe}
-
-Write the final well volumes back out as CSV.
-
-```{python}
-#| label: cell-results
-plate_map = scratch / "plate_map.csv"
-with open(plate_map, "w", newline="") as f:                        # <1>
-    writer = csv.writer(f)
-    writer.writerow(["well", "volume_ul"])
-    for well in target.get_all_children():
-        writer.writerow([
-            well.name.split("well_")[1],
-            well.tracker.get_used_volume(),
-        ])
-
-with open(plate_map, newline="") as f:                             # <2>
-    filled = [r for r in csv.DictReader(f) if float(r["volume_ul"]) > 0]
-
-for r in filled:
-    print(f"{r['well']:>4}  {r['volume_ul']:>6} uL")
-```
-
-1. `get_all_children()` walks the target plate ([chapter 1](../part1/01_robot_on_screen.qmd#summary));
-   `get_used_volume()` reads each well's tracker. Write once, in the same CSV shape you read.
-2. Reading it back proves the file is what you think it is — the cheapest correctness check for
-   any exported artifact.
-
-::: {.callout-warning title="Gotcha: volumes are floats; write what you mean"}
-
-`get_used_volume()` returns `0.0` for empty wells, not `None`. Decide whether your plate map should
-say `0` or `""` for "nothing here" — mixing the two breaks every consumer that does arithmetic on
-the column.
-:::
-
-**See also:** a run record with timestamps is a *log*, not a CSV — [chapter 13](../part3/13_record_runs.qmd#logging)
-shows why the format should follow the job.
-
-:::
 
 ---
 
@@ -428,7 +344,6 @@ is restated at system level in [chapter 13](../part3/13_record_runs.qmd#logging)
 
 - PLR ships no worklist support. The seam is plain `csv` + `pathlib` + `lh.transfer`.
 - `csv.DictReader` gives rows as dicts; values are strings, cast before arithmetic.
-- Validate the parsed worklist before any tip moves; `get_free_volume()` answers "enough liquid?".
+- `enumerate` pairs row `i` with channel `i`; `i % 8` wraps longer worklists back onto the head.
 - `sort_by_xy_and_chunk_by_x(targets, max_chunk_size)` turns wells into channel-parallel batches.
-- Results go back out as CSV (`get_used_volume()` per well).
 - **CSV for worklists, JSON for state, log lines for audit.** Three jobs, three formats.
