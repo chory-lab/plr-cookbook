@@ -376,11 +376,11 @@ for row in pair_rows:
     vols.append(round(V_SAMPLE * (conc / TARGET - 1), 1))      # <2>
 ```
 
-1. A scan of the whole map for every row — four rows against four samples is sixteen comparisons,
-   a 96-row worklist against a 96-well map is 9,216. The cost grows as the product of the two files.
+1. The lookup is re-derived inside the driver loop, so the two jobs — *find the concentration* and
+   *apply the rule* — are tangled together in one block.
 2. `append` in a loop: three lines of bookkeeping around one line of arithmetic, and `conc` leaks
    out of the inner loop, so a target missing from the map silently reuses the previous row's
-   concentration instead of failing.
+   concentration instead of failing. That is a wrong volume in a well, and nothing says so.
 
 That loop *does* collapse into a single comprehension — `next()` takes the first match, which is all
 the `break` was doing:
@@ -395,13 +395,16 @@ print(vols)
 
 It is worth writing out precisely because it is the wrong answer. It is four lines shorter, and it
 even fixes the leak — `next` raises `StopIteration` on a well the map does not have, instead of
-reusing the last row's concentration. But it still scans the whole map for every row, and the
-volume rule, the only part a reader came for, is now buried four parentheses deep behind the lookup.
+reusing the last row's concentration. But the volume rule, the only part a reader came for, is now
+buried four parentheses deep behind a lookup that is not the point.
 
-**Concision and efficiency are separate axes.** A comprehension buys the first cheaply and the
-second never; what makes an algorithm faster is choosing a different data structure. Here that is a
-dict, and a **dict comprehension** builds it in one pass — which then leaves the **list
-comprehension** free to say only the volume rule:
+**Shorter is not the same as clearer, and neither is what makes a run faster.** All three versions
+on this page issue exactly the same moves; the robot cannot tell them apart, and no worklist a
+bench produces is large enough for the arithmetic to cost anything measurable. Pipetting steps are
+the budget in this chapter — [`#group-sources`](#group-sources) spends fewer of them, and so does
+the filter below. What the comprehension buys is a reader who can see the rule, and a failure that
+is loud. Separate the lookup from the rule with a **dict comprehension**, and the **list
+comprehension** is left saying only the rule:
 
 ```{python}
 #| label: cell-plate-map
@@ -413,14 +416,15 @@ vols = [round(V_SAMPLE * (conc[row["target"]] / TARGET - 1), 1)        # <2>
 print(dict(zip((row["target"] for row in pair_rows), vols)))
 ```
 
-1. One pass over the map, then constant-time lookups — the two files are read once each instead of
-   once per pairing. The `for row in ... if ...` scan above is the shape that turns a fast script
-   into a slow one on a full plate, and a dict is the usual fix.
+1. The plate map, turned into the thing it is used as: a table from well to concentration, named
+   `conc` and built once. A dict comprehension is the one-line spelling of that; the reader sees
+   *what the map is* before seeing what is done with it.
 2. The rule reads as the rule: *this much buffer, for every row*. `conc[...]` raises `KeyError` on a
    target the map does not know — the loud failure the `break` version turned into a silent one.
 
-A comprehension **filters** in the same breath. Sample D4 is already at target, so its volume is
-zero, and a channel that dispenses nothing should not be in the operation at all:
+A comprehension **filters** in the same breath — and this is where the run actually gets shorter.
+Sample D4 is already at target, so its buffer volume is zero. Left in, it costs a tip, an
+aspiration, and a dispense to add nothing to a well:
 
 ```{python}
 #| label: cell-plate-map-filter
@@ -438,9 +442,11 @@ await lh.dispense(wells, vols=list(buffer_vols))
 await lh.drop_tips(spots)
 ```
 
-3. The `if` clause drops the zero-volume row before it becomes a channel. Filtering after the fact —
-   building all four operations and then removing one — means keeping two lists in step by index,
-   which is the bug `strict=True` exists to catch.
+3. The `if` clause drops the zero-volume row before it becomes a channel: three tips instead of
+   four, three draws instead of four. That is the saving worth counting — one fewer physical
+   operation, decided in data before anything moves. Filtering after the fact — building all four
+   operations and then removing one — means keeping two lists in step by index, which is the bug
+   `strict=True` exists to catch.
 4. The same transpose as [`#pairing`](#pairing): pairs in, parallel lists out.
 5. Buffer comes from one shared well, so the draws serialize and the index becomes `use_channels`
    — the [`#csv-run`](#csv-run) pattern, and the one place an index still earns its keep. Three
@@ -556,12 +562,14 @@ is restated at system level in [chapter 13](../part3/13_record_runs.qmd#logging)
   moves.
 - `groupby` on the source well turns one aspiration per row into one per reagent. Sort by the key
   first, or the grouping silently does nothing.
-- A **dict comprehension** is how two files get joined: one pass to build `{well: value}`, then
-  constant-time lookups instead of rescanning the map for every row.
+- A **dict comprehension** is how two files get joined: `{well: value}` built once and named, so the
+  driver states the rule instead of re-deriving the lookup inside it.
 - A **list comprehension** states a volume rule as one expression, and its `if` clause drops the
   rows that should never become channels. When the body awaits, logs, or writes, keep it a loop.
-- **A one-liner is not automatically a win.** The nested scan collapses into one comprehension and
-  stays quadratic; only the dict makes it fast. Shorter and faster are different questions.
+- **A one-liner is not automatically a win.** The nested lookup collapses into one comprehension and
+  becomes harder to read, not better. Shorter is a legibility argument; **faster means fewer
+  pipetting steps**, which is won by dropping operations — the zero-volume filter, `groupby` on the
+  source — not by rearranging Python.
 - `enumerate` is for the case where the index *is* an argument (`use_channels=[i]`); when the call
   takes whole lists, the loop goes away.
 - `sort_by_xy_and_chunk_by_x(targets, max_chunk_size)` turns wells into channel-parallel batches.

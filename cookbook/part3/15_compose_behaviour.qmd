@@ -249,8 +249,8 @@ def with_reagent_refill(source, capacity):
 1. `get_mounted_tips()` reports the tips in channel order, with `None` for an empty channel. It
    relies on tip tracking, enabled in Setup.
 2. A volume check is meaningless with no tips on the head, so fail loudly instead of passing
-   silently. `any()` over the list answers "is anything mounted" without first building a filtered
-   copy of it.
+   silently. `any()` asks the question directly — "is anything mounted" — rather than building a
+   filtered list and then testing whether it came out empty.
 3. One comprehension answers both questions the refill needs — *which channels own a tip*, and
    *which of those are low* — and `enumerate` keeps the channel index attached, so the refill
    addresses the exact channels rather than assuming the contiguous block 0–7. Each tip's tracker

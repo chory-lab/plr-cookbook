@@ -159,9 +159,13 @@ This chapter teaches the seam.
 Python) and `#results` (write plate maps and run records back out with `csv` + `pathlib`).
 `#pairing`'s `strict=True` snippet covers only the ragged-row slice of `#validate`.
 
-**Snippet bar for this chapter.** A snippet earns its place by being either measurably faster or
-materially shorter than the obvious alternative — and the recipe says which, against a named
-baseline. Demonstrating that a builtin exists (`enumerate` printing indices) is not enough.
+**Snippet bar for this chapter.** A snippet earns its place by being either **materially shorter**
+than the obvious alternative or by **saving pipetting steps** — and the recipe says which, against a
+named baseline. Demonstrating that a builtin exists (`enumerate` printing indices) is not enough.
+
+*Faster* in this book means fewer physical operations: fewer pickups, aspirations, dispenses, and
+deck traversals. It never means CPU time. A worklist is a few hundred rows and any parsing strategy
+finishes instantly, so big-O arguments about scanning a plate map are noise — do not make them.
 
 **Must cover:** pandas vs plain `csv`, honestly — a three-column worklist does not need a DataFrame.
 
