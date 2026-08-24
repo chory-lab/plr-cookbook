@@ -264,37 +264,21 @@ def claim(db, job_id, now):
     return cur.rowcount == 1
 ```
 
-And finish it:
+And finish it. Completing and failing are the same transition — a terminal status, a finish time,
+and an error if there was one — so they are one function with the status as an argument:
 
 ```{python}
-#| label: cell-scheduler-complete
-def complete(db, job_id, now):
+#| label: cell-scheduler-finish
+def finish(db, job_id, now, status, error=None):
     db.execute(
         """
         UPDATE jobs
-        SET status = 'complete',
-            finished = ?
-        WHERE id = ?
-        """,
-        (now, job_id),
-    )
-    db.commit()
-```
-
-Failures can be recorded similarly:
-
-```{python}
-#| label: cell-scheduler-fail
-def fail(db, job_id, now, error):
-    db.execute(
-        """
-        UPDATE jobs
-        SET status = 'failed',
+        SET status = ?,
             finished = ?,
             error = ?
         WHERE id = ?
         """,
-        (now, repr(error), job_id),
+        (status, now, repr(error) if error is not None else None, job_id),
     )
     db.commit()
 ```
@@ -329,9 +313,9 @@ while True:
     try:
         run(operation, json.loads(payload))
     except Exception as exc:
-        fail(db, job_id, time.time(), exc)
+        finish(db, job_id, time.time(), "failed", exc)
     else:
-        complete(db, job_id, time.time())
+        finish(db, job_id, time.time(), "complete")
 ```
 
 Another implementation could use threads, processes, `asyncio`, or workers on separate computers.

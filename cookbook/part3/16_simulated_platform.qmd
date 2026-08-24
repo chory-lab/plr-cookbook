@@ -185,7 +185,7 @@ Tips are indexed by column, because channel *i* sits at a fixed offset and can o
 Each plate takes the next column, so a three-sample plate retires all eight spots: six plates retire
 48 to use 34. That is the real cost of an eight-channel head on partial plates, not an accident of
 the code. It also sets a limit worth knowing — one rack covers twelve plates, and the thirteenth
-asks `rack["A13:H13"]` for tips that do not exist.
+finds the column stream exhausted.
 
 A stacker is not a machine. There is no backend and no `setup()` — the same idea as the magnet in
 [chapter 9](../part2/09_moving_labware.qmd#move-plate-to-magnet), where state is expressed by position rather than
@@ -195,24 +195,19 @@ enforces that rather than trusting the protocol:
 ```{python}
 #| label: cell-cell-stack-guard
 #| error: true
-probe = cor_96_wellplate_360uL_Fb(name="probe")
-inp.assign_child_resource(probe)
-inp.assign_child_resource(
-    cor_96_wellplate_360uL_Fb(name="probe_2")
-)
+demo = ResourceStack(name="demo_stack", direction="z")            # <1>
+demo.assign_child_resource(cor_96_wellplate_360uL_Fb(name="bottom"))
+demo.assign_child_resource(cor_96_wellplate_360uL_Fb(name="top"))
 
-inp.unassign_child_resource(probe)     # not the top item
+demo.unassign_child_resource(demo.children[0])   # the bottom plate
 ```
+
+1. A stack of its own, not the cell's `inp` — so the demonstration leaves nothing behind to clear
+   out, and `inp` starts the run genuinely empty. A `ResourceStack` need not be on a deck to
+   enforce this; the rule is in the resource tree, not the hardware.
 
 Taking the top plate off a stack is [chapter 9](../part2/09_moving_labware.qmd#plate-stacks); here
 the stack is the cell's inbox.
-
-```{python}
-#| label: cell-cell-stack-clear
-#| output: false
-for child in list(reversed(inp.children)):
-    inp.unassign_child_resource(child)
-```
 
 ### The dilution is arithmetic
 
