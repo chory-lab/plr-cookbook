@@ -382,8 +382,26 @@ for row in pair_rows:
    out of the inner loop, so a target missing from the map silently reuses the previous row's
    concentration instead of failing.
 
-Both problems go away at once. A **dict comprehension** builds the lookup in one pass; a **list
-comprehension** states the volume rule as one expression:
+That loop *does* collapse into a single comprehension — `next()` takes the first match, which is all
+the `break` was doing:
+
+```{python}
+#| label: cell-plate-map-oneliner
+vols = [round(V_SAMPLE * (float(next(e["conc"] for e in plate_map
+                                     if e["well"] == row["target"])) / TARGET - 1), 1)
+        for row in pair_rows]
+print(vols)
+```
+
+It is worth writing out precisely because it is the wrong answer. It is four lines shorter, and it
+even fixes the leak — `next` raises `StopIteration` on a well the map does not have, instead of
+reusing the last row's concentration. But it still scans the whole map for every row, and the
+volume rule, the only part a reader came for, is now buried four parentheses deep behind the lookup.
+
+**Concision and efficiency are separate axes.** A comprehension buys the first cheaply and the
+second never; what makes an algorithm faster is choosing a different data structure. Here that is a
+dict, and a **dict comprehension** builds it in one pass — which then leaves the **list
+comprehension** free to say only the volume rule:
 
 ```{python}
 #| label: cell-plate-map
@@ -542,6 +560,8 @@ is restated at system level in [chapter 13](../part3/13_record_runs.qmd#logging)
   constant-time lookups instead of rescanning the map for every row.
 - A **list comprehension** states a volume rule as one expression, and its `if` clause drops the
   rows that should never become channels. When the body awaits, logs, or writes, keep it a loop.
+- **A one-liner is not automatically a win.** The nested scan collapses into one comprehension and
+  stays quadratic; only the dict makes it fast. Shorter and faster are different questions.
 - `enumerate` is for the case where the index *is* an argument (`use_channels=[i]`); when the call
   takes whole lists, the loop goes away.
 - `sort_by_xy_and_chunk_by_x(targets, max_chunk_size)` turns wells into channel-parallel batches.
