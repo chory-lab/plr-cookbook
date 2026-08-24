@@ -262,9 +262,10 @@ await inc.stop()
 
 **What simulation cannot tell you.**
 
-Chatterbox validates *state* — volumes, tips, positions, temperature calls — not *physics*. It will
-not notice that a 200 µL tip cannot aspirate 250 µL without blowing out, or that a well is not
-where the deck thinks it is. Simulate for logic; verify against hardware.
+Simulations provide a model of the expected outcome of a process while making certain idealized assumptions
+about the nature of the hardware and physical processes. The most egregious assumption that PLR makes is that all of the
+liquid-handling steps are perfectly precise. This is unlikely to be true, and you must calibrate and verify your liquid-handling
+steps in order to get good results. 
 
 **See also:** moving a plate to a thermocycler and recording it is
 [chapter 9](../part2/09_moving_labware.qmd#off-deck-moves).
