@@ -63,7 +63,18 @@ module reads and writes it, and `pathlib.Path` handles paths without string surg
 Take a spreadsheet of transfers — one row per transfer — and execute it.
 
 The worklist ships with the cookbook at [`data/worklist.csv`](../data/worklist.csv); in real life
-it comes from a spreadsheet, a scheduler, or a LIMS export:
+it comes from a spreadsheet, a scheduler, or a LIMS export. Its entire contents:
+
+```csv
+target,volume
+B1,25
+B2,25
+B3,25
+B4,25
+```
+
+A header, then one transfer per row — four rows, so four transfers, all drawing from one source
+well (more on that below). Reading it and driving the robot from it:
 
 ```{python}
 #| label: cell-csv-read
@@ -72,14 +83,11 @@ worklist = pathlib.Path("../data/worklist.csv")              # <1>
 
 with open(worklist, newline="") as f:                        # <2>
     rows = list(csv.DictReader(f))
-
-print(worklist.read_text().strip())                          # <3>
 ```
 
 1. The file lives next door to this chapter, under the cookbook's shared `data/` directory.
 2. `csv.DictReader` gives each row as a dict keyed by the header — `{"target": "B1", "volume": "25"}`.
    Values are strings, so they are cast where they are used.
-3. Always look at a worklist before running it — the cheapest possible validation.
 
 All four transfers draw from **one source well**, `source["A1"]`, which changes how the run should
 be driven. One tip per transfer works, but wastes the head: with tips on channels 0–3 you can pick
@@ -88,7 +96,6 @@ parallel*, one channel per target:
 
 ```{python}
 #| label: cell-csv-run
-#| output: false
 n = len(rows)
 assert n <= 8                                                # <1>
 tip_spots = [tip_rack[f"A{i + 1}"][0] for i in range(n)]     # <2>
@@ -128,17 +135,27 @@ different sources too.
 
 Real worklists rarely share one source. Here every row is an independent source→target pair, drawn
 from a second checked-in file — [`data/transfers.csv`](../data/transfers.csv) — whose rows are
-deliberately in no useful order:
+deliberately in no useful order. Its entire contents:
+
+```csv
+source,target,volume
+C7,B1,30
+A2,D4,30
+B3,A5,30
+E8,C2,30
+```
+
+Each row is one independent transfer: aspirate from the `source` well, dispense into the `target`
+well. Nothing about that order — C7's column, then A2's, then B3's, then E8's — is chosen for the
+robot's benefit; it is just the order someone typed into a spreadsheet.
+
+Reading it in is the same two lines as any CSV:
 
 ```{python}
 #| label: cell-transfers-read
 #| output: false
-transfers_path = pathlib.Path("../data/transfers.csv")
-
-with open(transfers_path, newline="") as f:
+with open(pathlib.Path("../data/transfers.csv"), newline="") as f:
     pair_rows = list(csv.DictReader(f))
-
-print(transfers_path.read_text().strip())
 ```
 
 The naive driver treats each row as its own mini-protocol: pick up a tip, transfer, drop the tip —
@@ -146,7 +163,6 @@ four times over.
 
 ```{python}
 #| label: cell-transfers-naive
-#| output: false
 for row in pair_rows:
     await lh.pick_up_tips(tip_rack["A1"])
     await lh.transfer(
@@ -163,7 +179,6 @@ be batched: pick up one tip per channel up front and run the whole worklist thro
 
 ```{python}
 #| label: cell-transfers-batched
-#| output: false
 srcs = [source[row["source"]][0] for row in pair_rows]
 dsts = [target[row["target"]][0] for row in pair_rows]
 vols = [float(row["volume"]) for row in pair_rows]
