@@ -21,7 +21,7 @@ fed by a plate stacker.
 ```{python}
 #| label: cell-setup
 #| output: false
-import json, logging, random, sqlite3, tempfile
+import asyncio, json, logging, random, sqlite3, tempfile, time
 from datetime import datetime
 from pathlib import Path
 
@@ -44,27 +44,40 @@ print("scratch:", scratch)
 
 ::: {.recipe}
 
-A minimal simulated clock:
+A clock that can run against either simulated or real time:
 
 ```{python}
 #| label: cell-simclock
-class SimClock:
-    def __init__(self):
+class Clock:
+    def __init__(self, simulation: bool):                   # <1>
+        self.simulation = simulation
         self.time = 0.0
 
     def now(self):
-        return self.time
+        if self.simulation:
+            return self.time
+        return time.monotonic()                             # <2>
 
-    def advance(self, seconds):
-        self.time += seconds
+    async def wait(self, seconds):
+        if self.simulation:
+            self.time += seconds
+        else:
+            await asyncio.sleep(seconds)                    # <3>
 
-    def advance_to(self, when):
-        self.time = max(self.time, when)
+    async def wait_until(self, when):
+        await self.wait(max(0.0, when - self.now()))
 ```
 
-Instead of asking the operating system what time it is — `now = clock.now()` — and instead of
-actually waiting five minutes — `clock.advance(300)` — the protocol depends on the clock object, so
-either version can be substituted.
+1. `simulation` is the only mode switch. Pass `True` for a fast virtual run or `False` for a run
+   paced by real elapsed time.
+2. Real mode uses a monotonic clock rather than `datetime.now()`. Calendar time can jump when the
+   system clock is corrected; a monotonic clock cannot, so intervals and deadlines remain sound.
+3. The branch stays inside the clock boundary. The orchestration code always calls `now()`,
+   `wait()`, and `wait_until()` and does not grow separate simulated and real implementations.
+
+For example, a five-minute step is always `await clock.wait(300)`. In simulation that advances an
+in-memory value immediately; in real mode it awaits five wall-clock minutes. The surrounding
+protocol is the same in both cases.
 
 The same idea applies to measurements. Every quantification carries error, so a simulated reading is
 a true value plus noise:
@@ -304,10 +317,11 @@ two things this cell needs from it:
 sim_rng = random.Random(42)
 MEAN_GAP, SERVICE = 120, 300           # <1>
 
-t = 0.0
+clock = Clock(simulation=True)                     # <2>
+t = clock.now()                                    # <3>
 for i in range(6):
     t += sim_rng.expovariate(1 / MEAN_GAP)
-    n = sim_rng.randint(3, 8)                      # <2>
+    n = sim_rng.randint(3, 8)                      # <4>
     db.execute(
         "INSERT INTO plates(plate, arrived, concs) VALUES (?,?,?)",
         (
@@ -330,7 +344,12 @@ for plate_id, arrived, concs in db.execute(
 1. Plates arrive faster than the cell can process them. That is the interesting case — with a gap
    longer than the service time the stacker never holds more than one plate and nothing below is
    visible.
-2. A plate off an extraction step is rarely full. Varying the count is what keeps the channel
+2. This chapter renders quickly in simulation. Set the one argument to `False` to pace the same
+   orchestration loop with real elapsed time.
+3. Arrival deadlines are relative to the selected clock's starting point. That makes the same
+   generated worklist valid whether `now()` begins at virtual zero or at the operating system's
+   current monotonic value.
+4. A plate off an extraction step is rarely full. Varying the count is what keeps the channel
    arithmetic below honest: nothing may assume eight.
 
 ### Load and process
@@ -467,7 +486,6 @@ records the consequence:
 ```{python}
 #| label: cell-cell-run
 #| output: false
-clock = SimClock()
 tip_columns = (rack.column(c) for c in range(rack.num_items_x))   # <1>
 
 while True:
@@ -481,7 +499,7 @@ while True:
         if nxt is None:
             break
 
-        clock.advance_to(nxt)                                    # <2>
+        await clock.wait_until(nxt)                              # <2>
         continue
 
     plate = inp.get_top_item()                                   # <3>
@@ -497,7 +515,7 @@ while True:
     rows = await normalize(plate, samples, next(tip_columns))     # <4>
 
     await lh.move_plate(plate, out)
-    clock.advance(SERVICE)
+    await clock.wait(SERVICE)
 
     for i, ((vol, flag), conc) in enumerate(zip(rows, samples)):
         db.execute(
@@ -691,6 +709,8 @@ equipment.
 
 ## What to remember
 
+- Put the simulation switch at the clock boundary: `Clock(simulation=True)` runs instantly and
+  `Clock(simulation=False)` uses real elapsed time, while the orchestration code remains identical.
 - Substitute time and measurements: a protocol that depends on a clock object and a seeded RNG can
   run instantly and reproduce a failing test.
 - Seed the RNG (`random.Random(42)`) — stochastic, but deterministic.
