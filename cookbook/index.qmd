@@ -13,7 +13,7 @@ you may be surprised at how quickly you pick up this material.
 ## What is this Cookbook For?
 This cookbook is meant to explain some basic patterns and workflow compositions that can help you write PyLabRobot code. The principles of logic
 and orchestration extend beyond PyLabRobot, but PyLabRobot is arguably one of the most efficient ways of implementing these patterns in the world
-of lab automation. In fact, many labs spend thousands of dollars on software to address the same problems we take on succinctly in this book.
+of lab automation. In fact, many labs spend thousands of dollars on software and consultants to address the same problems we take on succinctly in this book.
 
 PyLabRobot is meant primarily to communicate with physical instruments, but we don't cover details of physical process implementation in this book, and the
 lessons are written for simulation alongside the visualizer. We expect that the logic of process design and orchestration will be broadly useful across
