@@ -2,6 +2,13 @@
 title: "Simulating an Orchestrated Platform"
 ---
 
+This chapter ties together several of the previous lessons to demonstrate how the process logic of an orchestrated platform can be simulated with PyLabRobot.
+This platform is meant to be a realistic example of a workcell in a highly automated lab handling stochastic inputs. This use case exemplifies many realistic demands
+that will be placed on an automated workcell - optimizing pipetting operations for time efficiency, tracking reagent use over time, recording all actions and data in an organized way.
+
+Modeling how a platform responds to realistic data is invaluable for process design that can be extended to many different protocols. We encourage the reader to consider how this methodology
+could be applied to designing other processes and platforms. 
+
 Long waits and physical measurements are two reasons laboratory code is difficult to test quickly.
 This chapter substitutes simulated time and stochastic measurements, then combines them with the
 run directory of [chapter 13](13_record_runs.qmd), the SQLite tables of
