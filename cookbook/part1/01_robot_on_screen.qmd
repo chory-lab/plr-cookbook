@@ -3,7 +3,7 @@ title: "Getting a robot on screen"
 ---
 This chapter shows you how to instantiate instrument interfaces in PLR.
 
-::: {.callout-note}
+You can follow along with all of the code here by running it yourself in JupyterLab.
 
 Install PyLabRobot and JupyterLab together before starting:
 
@@ -11,7 +11,11 @@ Install PyLabRobot and JupyterLab together before starting:
 python -m pip install pylabrobot==0.2.2 jupyterlab
 ```
 
-:::
+Then start JupyterLab from the folder where you want to keep your notebooks:
+
+jupyter lab
+
+JupyterLab will open in your browser. Create a new Python notebook, paste the recipe into a cell, and run it with Shift+Enter. Notebook cells support the await calls used throughout this book directly.
 
 ---
 
