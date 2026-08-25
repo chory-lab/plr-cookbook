@@ -3,6 +3,16 @@ title: "Getting a robot on screen"
 ---
 This chapter shows you how to instantiate instrument interfaces in PLR.
 
+::: {.callout-note}
+
+Install PyLabRobot and JupyterLab together before starting:
+
+```bash
+python -m pip install pylabrobot==0.2.2 jupyterlab
+```
+
+:::
+
 ---
 
 ## Get a liquid handler running with no hardware {#first-robot}
