@@ -2,8 +2,8 @@
 title: "Log and organize runs"
 ---
 
-Once a protocol grows beyond a single script, the question becomes *what did the run do*. This
-chapter covers recording that: logging at several levels, and organizing the files a run produces.
+Logging the actions that a robot takes is critical for all live protocols. Logs are indispensable for diagnosing problems and
+for ensuring the validity of scientific data produced by automated experiments. 
 
 ## Setup {.unnumbered}
 
