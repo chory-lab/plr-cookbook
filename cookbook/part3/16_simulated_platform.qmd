@@ -68,16 +68,7 @@ class Clock:
         await self.wait(max(0.0, when - self.now()))
 ```
 
-1. `simulation` is the only mode switch. Pass `True` for a fast virtual run or `False` for a run
-   paced by real elapsed time.
-2. Real mode uses a monotonic clock rather than `datetime.now()`. Calendar time can jump when the
-   system clock is corrected; a monotonic clock cannot, so intervals and deadlines remain sound.
-3. The branch stays inside the clock boundary. The orchestration code always calls `now()`,
-   `wait()`, and `wait_until()` and does not grow separate simulated and real implementations.
-
-For example, a five-minute step is always `await clock.wait(300)`. In simulation that advances an
-in-memory value immediately; in real mode it awaits five wall-clock minutes. The surrounding
-protocol is the same in both cases.
+You can use this class to get simulated time from a simulated method, and real time during a live method, with just a single Boolean variable passed to the `simulating` argument. 
 
 The same idea applies to measurements. Every quantification carries error, so a simulated reading is
 a true value plus noise:
@@ -91,31 +82,6 @@ def quantify(true_conc, cv=0.03):
         1 + rng.gauss(0, cv)
     )
 ```
-
-1. Seeding the random-number generator gives the simulation stochastic behaviour while keeping a
-   failing test reproducible.
-
-For example, quantifying the same sample four times:
-
-```{python}
-#| label: cell-simread-run
-for _ in range(4):
-    print(round(quantify(48.0), 2))
-```
-
-Re-seeding reproduces the identical sequence, which is what makes an assertion about simulated data
-worth writing at all:
-
-```{python}
-#| label: cell-simread-repeat
-rng = random.Random(42)
-print([round(quantify(48.0), 2) for _ in range(4)])
-```
-
-**See also:** `pylabrobot.io.capture` in [chapter 12](../part2/12_hardware.qmd) records real device
-I/O for replay, which is the hardware-level counterpart to this.
-
-:::
 
 ---
 
