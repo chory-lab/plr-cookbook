@@ -156,23 +156,8 @@ called elsewhere it records `NoneType: None`.
 
 ::: {.recipe}
 
-Files answer a different question from database rows.
-
-A database is convenient for:
-
-```text
-Which sample is in B7?
-What was its last measured OD?
-Which wells belong to experiment 42?
-```
-
-The filesystem is convenient for:
-
-```text
-Where is the raw reader output?
-Which configuration produced this run?
-Where are its plots and logs?
-```
+It can be very helpful to configure a filesystem for organizing data collected across experiments so that each experiment's data
+lives in an easily identifiable location. This is especially helpful for analyzing trends across experiments. 
 
 A simple convention is one timestamped directory per run:
 
