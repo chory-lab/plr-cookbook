@@ -1,5 +1,5 @@
 ---
-title: "Simulating an Orchestrated Platform"
+title: "Simulating an orchestrated platform"
 ---
 
 This chapter ties together several of the previous lessons to demonstrate how the process logic of an orchestrated platform can be simulated with PyLabRobot.
