@@ -89,26 +89,14 @@ def quantify(true_conc, cv=0.03):
 
 ::: {.recipe}
 
-The pieces can now be combined into one unit operation of the kind that sits in a real pipeline.
-
-Plates of extracted DNA arrive from upstream at times nobody controls. Each well has a known
-concentration, measured before the plate got here and supplied with it. The cell dilutes every well
-to a target concentration with buffer, then sets the plate down on the output side.
+Normalizing concentrations is one of the most widespread operations in lab automation. Here we will design a workcell that can handle an asynchronously populated
+stack of 96-well plates with samples that we must normalize. Arrival times are random, numbers of samples are random, concentrations are random.  
 
 ```text
 arrivals ──► input stacker ──► liquid handler ──► output stacker
              (plate hotel)      (dilute to target)
 ```
 
-Three pieces of the platform are in that diagram, and only one of them pipettes. The arrival stream
-stands in for whatever runs upstream — an extraction cell, a quantification step, an operator with a
-trolley — reduced to the two things this cell needs from it: when a plate shows up, and what is in
-it. The stackers are the interface to the rest of the platform on either side, and as the last
-section shows, the input stacker decides more about how this cell behaves than any of the code does.
-
-What none of it needs is a scheduler. The decisions here are per-well arithmetic, and the plate that
-runs next is whichever one the gripper can reach. What the cell does need is somewhere to record
-what happened, and a way to run several hours of arrivals in a fraction of a second.
 
 ### Build the cell
 
