@@ -326,10 +326,15 @@
   chapter: 14
   apis: "sqlite3, job queue, submit, next_job, claim, complete, fail, priority, resource, not_before, persistent queue"
 
-- title: "Simulate a normalization cell"
+- title: "Build a normalization cell from unit operations"
   path: part3/16_simulated_platform.qmd#platform
   chapter: 16
-  apis: "simulation, SimClock, ResourceStack, get_top_item, move_plate, use_channels, volume tracking, invariants, queue discipline, LCFS, process logging, run directory"
+  apis: "unit operations, ResourceStack, move_plate, use_channels, volume tracking, arrivals generator, sample flow, run directory, process logging"
+
+- title: "Run a cell against simulated or real time"
+  path: part3/16_simulated_platform.qmd#run
+  chapter: 16
+  apis: "simulation switch, Clock, poll interval, get_top_item, invariants, queue discipline, LCFS"
 
 - title: "Measure a plate for a definition"
   path: part4/17_custom_labware.qmd#measure
