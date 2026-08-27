@@ -23,26 +23,7 @@ from datetime import datetime
 from pathlib import Path
 
 run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-class SimClock:                       # <1>
-    def __init__(self):
-        self.time = 0.0
-
-    def now(self):
-        return self.time
-
-    def advance(self, seconds):
-        self.time += seconds
-
-    def advance_to(self, when):
-        self.time = max(self.time, when)
-
-clock = SimClock()
 ```
-
-1. A clock that never waits, so the delayed-work cell at the end can show "thirty minutes later"
-   without sleeping. The [simulation chapter](16_simulated_platform.qmd#simulation) builds on the
-   same idea.
 ::::
 
 
@@ -338,13 +319,12 @@ submit(
     operation="read_plate",
     resource="reader",
     payload={"plate": "plate_1"},
-    not_before=clock.now() + 1800,
+    not_before=time.time() + 1800,
 )
 ```
 
-The scheduler does not need to sleep for thirty minutes — the job simply becomes eligible when
-`clock.now() >= not_before`. With a real clock that happens after thirty wall-clock minutes; with
-`SimClock`, the simulation can jump directly there.
+The scheduler does not need to sleep for thirty minutes. The row sits in the table, and `next_job`
+passes over it until `now >= not_before` — no timer, no thread parked on the incubation.
 
 :::
 
