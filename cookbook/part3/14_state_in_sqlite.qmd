@@ -2,10 +2,7 @@
 title: "Keep state in SQLite"
 ---
 
-State that must survive one Python process — sample identity, plate maps, measurements, and queued
-work — fits naturally in a small SQLite database. This chapter covers the two shapes that come up
-most: a plate map that persists across notebook restarts, and a job queue that outlives whatever
-happens to be executing it.
+SQLite is a file-based database engine that is very useful for storing persistent, structured data like sample identities, protocol start times, and measurements in a 96-well plate. SQLite gives the concurrency and robustness of a database engine while being very easy to spin up and use.
 
 ## Setup {.unnumbered}
 
@@ -53,8 +50,7 @@ clock = SimClock()
 
 ::: {.recipe}
 
-Once sample identity needs to survive a notebook restart, a small SQLite database is often enough.
-`sqlite3` is in the standard library and writes one file.
+SQLite is very amenable to storing data about 96-well plates.
 
 A plate map can be represented directly:
 
