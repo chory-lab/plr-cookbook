@@ -218,8 +218,8 @@ def new_run(protocol, machines):
     return run_dir, manifest, log
 ```
 
-1. Filled in at the end of the run, once the cell knows which plates it actually saw. Upstream is
-   stochastic, so no manifest written at the start can name them.
+1. Filled in at the end of the run, once the cell knows which plates it actually saw. The sample
+   flow is stochastic, so no manifest written at the start can name them.
 2. The process log is this run's file, not the root logger's console. Without this, every line
    would also land wherever the surrounding application happens to log.
 
@@ -268,8 +268,8 @@ db = open_tables(run_dir / "run.sqlite")
 
 ### Model the arrivals
 
-Arrivals are the upstream process, reduced to the only two things this cell needs from it: when a
-plate shows up, and what is in it. The sampling is a generator — suspended between arrivals, holding
+Arrivals are the sample flow into this cell, reduced to the only two things the cell needs from
+it: when a plate shows up, and what is in it. The sampling is a generator — suspended between arrivals, holding
 `t` and `n` as ordinary local variables, drawing a plate only when asked:
 
 ```{python}
@@ -296,8 +296,8 @@ def arrivals(rng, start, until):
 
 1. Plates arrive faster than the cell can process them — a mean gap of 120 s against a 300 s
    service time. That is the interesting case; with a gap longer than the service time the stacker
-   never holds more than one plate and nothing below is visible. `WINDOW` is how long upstream keeps
-   feeding the cell; `POLL` is how often the cell looks.
+   never holds more than one plate and nothing below is visible. `WINDOW` is how long samples keep
+   arriving; `POLL` is how often the cell looks.
 2. Arrivals start from the clock's own zero, so the same code is valid whether `now()` begins at
    virtual zero or at the operating system's current monotonic value.
 3. The gap is drawn before the cutoff is checked, so the window closes on a real draw rather than
@@ -309,16 +309,16 @@ An exponential gap means the process has no memory: how long the cell has alread
 nothing about how much longer it will. That is what makes the stacker depth, and the wait times
 below, worth simulating rather than reasoning about.
 
-### One upstream, two implementations
+### Simulated and real sample flows
 
-The orchestration loop must not be written against the generator. A simulated upstream can be asked
-when the next plate will arrive; a real one cannot. Build the loop on the two questions reality can
-answer — *what has arrived by now*, and *is upstream finished* — and both sides fit:
+The orchestration loop must not be written against the generator. A simulated sample flow can be
+asked when the next plate will arrive; a real one cannot. Build the loop on the two questions
+reality can answer — *what has arrived by now*, and *has the flow stopped* — and both sides fit:
 
 ```{python}
-#| label: cell-cell-upstream
+#| label: cell-cell-sample-flow
 #| output: false
-class SimulatedUpstream:
+class SimulatedSampleFlow:
     def __init__(self, rng, start, until):
         self.stream = arrivals(rng, start, until)
         self.pending = next(self.stream, None)           # <1>
@@ -340,14 +340,14 @@ class SimulatedUpstream:
    what keeps the loop runnable on hardware.
 2. Every plate that has appeared since the last call: none, one, or several if the cell stayed busy
    through more than one gap.
-3. Upstream has stopped feeding. The loop drains what is left and exits.
+3. No more samples are coming. The loop drains what is left and exits.
 
 The real implementation answers the same two questions by looking rather than by drawing. Write this
 one against your own barcode reader and sample database; the loop does not change:
 
 ```python
 #| eval: false
-class StackerUpstream:
+class StackerSampleFlow:
     def __init__(self, reader, samples, until):
         self.reader, self.samples = reader, samples
         self.until = until
@@ -373,10 +373,10 @@ class StackerUpstream:
 
 ### Load an arrived plate
 
-Upstream sets each arrived plate on top of the input stacker. The robot is not involved, and the
-row is written at the moment the plate is real — the database records what happened, never what is
-scheduled to. This function is shared by both upstreams: on hardware the plate is already sitting
-there, and `assign_child_resource` is how the resource tree is told about a plate that exists:
+Each arrived plate is set on top of the input stacker by whatever feeds this cell. The robot is
+not involved, and the row is written at the moment the plate is real — the database records what
+happened, never what is scheduled to. This function is shared by both sample flows: on hardware the
+plate is already sitting there, and `assign_child_resource` is how the resource tree is told about a plate that exists:
 
 ```{python}
 #| label: cell-cell-load
@@ -528,7 +528,7 @@ def close_run():
 
 ### Pick simulation or hardware
 
-One flag picks both the clock and the upstream, and nothing below it knows which it got:
+One flag picks both the clock and the sample flow, and nothing below it knows which it got:
 
 ```{python}
 #| label: cell-cell-switch
@@ -536,16 +536,16 @@ One flag picks both the clock and the upstream, and nothing below it knows which
 SIMULATION = True                                                # <1>
 
 clock = Clock(simulation=SIMULATION)
-upstream = (
-    SimulatedUpstream(sim_rng, start=clock.now(), until=WINDOW)
+sample_flow = (
+    SimulatedSampleFlow(sim_rng, start=clock.now(), until=WINDOW)
     if SIMULATION
-    else StackerUpstream(reader, samples, until=WINDOW)          # <2>
+    else StackerSampleFlow(reader, samples, until=WINDOW)        # <2>
 )
 ```
 
 1. The whole switch. Simulated, this chapter renders in about a second; real, the same loop paces
    itself against elapsed time and a barcode reader.
-2. Only the branch that is taken is evaluated, so this cell runs with `StackerUpstream` undefined —
+2. Only the branch that is taken is evaluated, so this cell runs with `StackerSampleFlow` undefined —
    as it is here, where there is no reader to hand it.
 
 ### Run it
@@ -560,11 +560,11 @@ records the consequence:
 tip_columns = (rack.column(c) for c in range(rack.num_items_x))  # <1>
 
 while True:
-    for arrival in upstream.due(clock.now()):                    # <2>
+    for arrival in sample_flow.due(clock.now()):                 # <2>
         load_plate(*arrival)
 
     if len(inp.children) == 0:
-        if upstream.closed(clock.now()):                         # <3>
+        if sample_flow.closed(clock.now()):                      # <3>
             break
 
         await clock.wait(POLL)                                   # <4>
@@ -589,7 +589,7 @@ close_run()
    the plate takes only the spots its `use_channels` names. When the rack is spent, `next()` raises
    `StopIteration`, which is the true statement: this cell has run out of tips.
 2. The only question the loop asks about arrivals, and one a real cell can answer.
-3. Empty stacker and upstream finished: everything that arrived has been processed.
+3. Empty stacker and no more samples coming: everything that arrived has been processed.
 4. Idle only because the stacker is empty and nothing has arrived. Simulated, the poll costs nothing
    and the clock jumps `POLL` seconds; real, it is a `POLL`-second sleep. The loop cannot tell.
 5. `get_top_item()` is the only plate the gripper can reach.
@@ -689,7 +689,7 @@ equipment.
 ## What to remember
 
 - Put the simulation switch at the **boundaries**, not through the protocol: one flag picks the
-  clock and the upstream, and the orchestration loop between them is the same code either way.
+  clock and the sample flow, and the orchestration loop between them is the same code either way.
 - **The loop may only ask questions reality can answer.** "What has arrived by now?" has an answer
   on hardware; "when will the next plate arrive?" does not. One lookahead is all it takes to make a
   loop that only ever runs in simulation.
@@ -702,7 +702,7 @@ equipment.
   than individual values. Set the tolerance wider than the simulated measurement noise.
 - The resource tree is the check that a move was physically possible; chatterbox validates state,
   not physics.
-- Sample the upstream process inside the loop, one arrival at a time, against the same clock the
+- Sample the incoming flow inside the loop, one arrival at a time, against the same clock the
   cell runs on. A schedule generated in advance is a replay, not a simulation of arrivals.
 - Polling is what makes the switch work on both sides: `wait(POLL)` is a free jump in simulation and
   a real sleep on hardware, and it costs the run only that a start time is rounded up to the next
