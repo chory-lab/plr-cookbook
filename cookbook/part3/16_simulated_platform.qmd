@@ -469,9 +469,16 @@ backend sees every active channel move together, each carrying its own volume: `
 says which channels act, no channel is pinned to a rack row, and the trough offsets are not asked
 for — PLR spreads the active channels across the reservoir on its own.
 
-### Run it
+### Define your toolbox
 
-Everything the run reads or writes is behind a name, so the loop itself is only the protocol:
+Let's identify the main unit operations we need and break them down into functions. This is one of the most valuable architectural parts of
+scripting a protocol. Not only will this make the final script more readable, like a natural language protocol, but identifying unit operations
+will make it easier to reason about the logical flow of your process and will make each operation individually testable with defined inputs and outputs.
+
+We don't cover testing strategy in this cookbook, since it would take a very large amount of content to do justice to the topic, and it is highly contingent on
+physical implementation details outside of our scope. Suffice to say that a robust platform is built from rigorously tested unit operations that are composed
+into further unit operations and tested at each level of composition. The root causes of failures, as they inevitably occur, are identified and addressed through tests on unit operations.
+In a sense, the test is the fundamental unit and measure of certainty in an automated platform, just as an experiment is the measure of certainty for a scientific hypothesis.
 
 ```{python}
 #| label: cell-cell-record
@@ -540,6 +547,8 @@ upstream = (
 The loop has no scheduler in it. It admits whatever arrived, takes the top plate if there is one,
 and otherwise waits one poll interval. **The hardware chooses which plate runs**, and the loop only
 records the consequence:
+
+### Run it
 
 ```{python}
 #| label: cell-cell-run
