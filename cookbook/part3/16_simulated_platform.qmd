@@ -526,7 +526,7 @@ def close_run():
 1. The achieved concentration is what the dilution actually produced, seen through a quantification
    carrying the noise from the first recipe.
 
-### Run it
+### Pick simulation or hardware
 
 One flag picks both the clock and the upstream, and nothing below it knows which it got:
 
@@ -548,11 +548,11 @@ upstream = (
 2. Only the branch that is taken is evaluated, so this cell runs with `StackerUpstream` undefined —
    as it is here, where there is no reader to hand it.
 
+### Run it
+
 The loop has no scheduler in it. It admits whatever arrived, takes the top plate if there is one,
 and otherwise waits one poll interval. **The hardware chooses which plate runs**, and the loop only
 records the consequence:
-
-### Run it
 
 ```{python}
 #| label: cell-cell-run
