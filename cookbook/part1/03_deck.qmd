@@ -2,6 +2,9 @@
 title: "Putting things on the deck"
 ---
 
+In lab automation, resources must be precisely located in space at well-defined positions. These positions can be defined on movable plate carriers
+like on the Hamilton STAR, or machined deck positions like on the OT-2. PyLabRobot makes it easy to assign labware to these defined positions as we will show below.
+
 :::: {.callout-note collapse="true" title="Setup"}
 
 ```{python}
