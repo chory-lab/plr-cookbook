@@ -523,66 +523,6 @@ for conc, vol, flag, achieved in db.execute(
 print("every unflagged well within 10% of target")
 ```
 
-1. The tolerance has to cover the 0.1 µL rounding in `plan_well` *and* the quantification noise. A
-   tolerance tighter than the measurement is a test that fails for no reason.
-
-Nothing teleported — the plates are physically where the protocol believes:
-
-```{python}
-#| label: cell-cell-invariant-position
-assert len(inp.children) == 0
-assert len(out.children) == 6
-assert carrier[1].resource is None
-print("input stacker drained, six plates on the output stacker, deck clear")
-```
-
-That last one is worth more than it looks. Chatterbox validates *state*, not physics
-([chapter 1](../part1/01_robot_on_screen.qmd#workcell)) — it will happily print a move that could
-never happen. The resource tree is what catches it.
-
-### A stacker is a stack
-
-The plates did not come out in the order they went in:
-
-```{python}
-#| label: cell-cell-fifo
-order = db.execute(
-    "SELECT arrived, started FROM plates ORDER BY started"
-).fetchall()
-
-fifo = all(a <= b for (a, _), (b, _) in zip(order, order[1:]))
-print("FIFO:", fifo)
-print("longest wait:", round(max(s - a for a, s in order)), "s")
-```
-
-
-### Exercise: what would a true FIFO stacker be?
-
-The alternative PLR already models is random access — `pylabrobot.storage.Incubator`, with
-independent sites and a loading tray, backed by Cytomat or Liconic hardware. Any plate is reachable,
-so arrival order is yours to choose. It also costs more and takes more deck.
-
-Between the two sits the bottom-feed destacker, which PLR does not model. Consider it from both
-ends.
-
-**Physically.** The bottom plate carries the weight of the stack, so dispensing it means holding
-plate 2 while plate 1 leaves — fingers engaging a plate skirt, or a shaft that lifts the stack by one
-pitch. What does that buy, and what does it cost in tooling that only fits one plate format? And what
-is the alternative that needs no new mechanism at all — at the price of putting every plate through
-two extra moves?
-
-**As a PLR resource.** Subclass `ResourceStack`, add `get_bottom_item()`, and override the top-only
-guard seen above. Then check the work against the resource tree:
-
-```python
-#| eval: false
-print([(c.name, c.location.z) for c in stacker.children])
-print(stacker.get_size_z())
-```
-
-Removing the bottom plate without re-settling the plates above it leaves a stack whose reported
-height and whose children's positions disagree — the plates float. Chatterbox will not notice.
-Custom resources are [chapter 17](../part4/17_custom_labware.qmd).
 
 ### Exercise: how old does the oldest plate get?
 
