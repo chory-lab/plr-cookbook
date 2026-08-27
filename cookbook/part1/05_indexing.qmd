@@ -2,6 +2,8 @@
 title: "Indexing"
 ---
 
+Lab automation is full of indexed containers and resources, like 96-well plates. PyLabRobot provides several indexing schemas that allow for convenient addressing formulas. 
+
 :::: {.callout-note collapse="true" title="Setup"}
 
 ```{python}
