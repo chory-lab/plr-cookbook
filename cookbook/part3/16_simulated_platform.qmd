@@ -52,6 +52,8 @@ from pylabrobot.resources import (
 
 ::: {.recipe}
 
+Simulated time is a highly useful concept for testing methods whose success is contingent on timing and throughput rate.
+
 A clock that can run against either simulated or real time:
 
 ```{python}
@@ -78,8 +80,8 @@ class Clock:
 
 You can use this class to get simulated time from a simulated method, and real time during a live method, with just a single Boolean variable passed to the `simulating` argument. 
 
-The same idea applies to measurements. Every quantification carries error, so a simulated reading is
-a true value plus noise:
+The same idea applies to measurements. You can simulate credible distributions of random variables, like DNA concentrations in samples, and use these to test the robustness
+of your process against random data. 
 
 ```{python}
 #| label: cell-simread
