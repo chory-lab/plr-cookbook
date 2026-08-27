@@ -160,7 +160,7 @@ buffer["A1"][0].set_volume(195_000)
 ```
 
 That is one rack of 96 filtered 200 µL tips and a single-well trough holding 195 mL. The run below
-uses 34 tips and 1.8 mL of buffer, and its most concentrated well takes 83.9 µL — inside one tip, so no well
+uses 37 tips and 1.9 mL of buffer, and its most concentrated well takes 83.9 µL — inside one tip, so no well
 needs a second trip to the trough and the refill wrapper from
 [chapter 15](15_compose_behaviour.qmd#recovery) is not needed here.
 
@@ -188,130 +188,153 @@ def plan_well(conc):
 
 ### Record the run
 
-The run directory and the process log are [chapter 13](13_record_runs.qmd); the tables are
-[chapter 14](14_state_in_sqlite.qmd).
+The run directory and the process log are [chapter 13](13_record_runs.qmd), as one function:
 
 ```{python}
 #| label: cell-cell-run-dir
 #| output: false
-run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-run_dir = Path("experiments/normalization") / f"{run_id}_normalization"
-for subdir in ["inputs", "raw", "derived", "logs", "state"]:
-    (run_dir / subdir).mkdir(parents=True, exist_ok=True)
+def new_run(protocol, machines):
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir = Path("experiments") / protocol / f"{run_id}_{protocol}"
 
-manifest = {
-    "run_id": run_id,
-    "started": datetime.now().isoformat(),
-    "protocol": "normalization",
-    "plates": [],
-    "machines": ["liquid_handler"],
-}
-(run_dir / "manifest.json").write_text(
-    json.dumps(manifest, indent=2)
-)
+    for subdir in ["inputs", "raw", "derived", "logs", "state"]:
+        (run_dir / subdir).mkdir(parents=True, exist_ok=True)
 
-log = logging.getLogger(f"run.{run_id}")
-log.setLevel(logging.INFO)
-log.propagate = False
-log.addHandler(
-    logging.FileHandler(run_dir / "logs" / "process.log")
-)
-
-db = sqlite3.connect(run_dir / "run.sqlite")
-
-db.execute("""
-    CREATE TABLE plates (
-        plate     TEXT PRIMARY KEY,
-        arrived   REAL,
-        concs     TEXT,
-        loaded    INTEGER,
-        started   REAL,
-        finished  REAL
+    manifest = {
+        "run_id": run_id,
+        "started": datetime.now().isoformat(),
+        "protocol": protocol,
+        "plates": [],                                   # <1>
+        "machines": machines,
+    }
+    (run_dir / "manifest.json").write_text(
+        json.dumps(manifest, indent=2)
     )
-""")
 
-db.execute("""
-    CREATE TABLE wells (
-        plate     TEXT,
-        well      INTEGER,
-        conc      REAL,
-        buffer    REAL,
-        flag      TEXT,
-        achieved  REAL
+    log = logging.getLogger(f"run.{run_id}")
+    log.setLevel(logging.INFO)
+    log.propagate = False                               # <2>
+    log.addHandler(
+        logging.FileHandler(run_dir / "logs" / "process.log")
     )
-""")
+
+    return run_dir, manifest, log
 ```
 
-Arrivals are a seeded stream of times and concentrations — the upstream process, reduced to the only
-two things this cell needs from it:
+1. Filled in at the end of the run, once the cell knows which plates it actually saw. Upstream is
+   stochastic, so no manifest written at the start can name them.
+2. The process log is this run's file, not the root logger's console. Without this, every line
+   would also land wherever the surrounding application happens to log.
+
+The tables are [chapter 14](14_state_in_sqlite.qmd) — one row per plate, one row per well:
+
+```{python}
+#| label: cell-cell-tables
+#| output: false
+def open_tables(path):
+    db = sqlite3.connect(path)
+
+    db.execute("""
+        CREATE TABLE plates (
+            plate     TEXT PRIMARY KEY,
+            arrived   REAL,
+            concs     TEXT,
+            started   REAL,
+            finished  REAL
+        )
+    """)
+
+    db.execute("""
+        CREATE TABLE wells (
+            plate     TEXT,
+            well      INTEGER,
+            conc      REAL,
+            buffer    REAL,
+            flag      TEXT,
+            achieved  REAL
+        )
+    """)
+
+    return db
+```
+
+Which makes starting a run two lines:
+
+```{python}
+#| label: cell-cell-run-open
+#| output: false
+run_dir, manifest, log = new_run(
+    "normalization", machines=["liquid_handler"]
+)
+db = open_tables(run_dir / "run.sqlite")
+```
+
+Arrivals are the upstream process, reduced to the only two things this cell needs from it: when a
+plate shows up, and what is in it. Nothing here builds a schedule — the generator draws a plate,
+hands it over, and does not draw the next one until asked:
 
 ```{python}
 #| label: cell-cell-arrivals
+#| output: false
 sim_rng = random.Random(42)
-MEAN_GAP, SERVICE = 120, 300           # <1>
+MEAN_GAP, SERVICE, WINDOW = 120, 300, 900          # <1>
 
 clock = Clock(simulation=True)                     # <2>
-t = clock.now()                                    # <3>
-for i in range(6):
-    t += sim_rng.expovariate(1 / MEAN_GAP)
-    n = sim_rng.randint(3, 8)                      # <4>
-    db.execute(
-        "INSERT INTO plates(plate, arrived, concs) VALUES (?,?,?)",
-        (
-            f"plate_{i+1}",
-            t,
-            json.dumps([
-                max(1.0, sim_rng.gauss(60, 25))
-                for _ in range(n)
-            ]),
-        ),
-    )
-db.commit()
 
-for plate_id, arrived, concs in db.execute(
-    "SELECT plate, arrived, concs FROM plates ORDER BY arrived"
-):
-    print(plate_id, round(arrived), len(json.loads(concs)), "samples")
+def arrivals(rng, start, until):
+    t, n = start, 0                                # <3>
+
+    while True:
+        t += rng.expovariate(1 / MEAN_GAP)
+
+        if t > until:                              # <4>
+            return
+
+        n += 1
+        yield t, f"plate_{n}", [
+            max(1.0, rng.gauss(60, 25))            # <5>
+            for _ in range(rng.randint(3, 8))
+        ]
 ```
 
-1. Plates arrive faster than the cell can process them. That is the interesting case — with a gap
-   longer than the service time the stacker never holds more than one plate and nothing below is
-   visible.
+1. Plates arrive faster than the cell can process them — a mean gap of 120 s against a 300 s
+   service time. That is the interesting case; with a gap longer than the service time the stacker
+   never holds more than one plate and nothing below is visible. `WINDOW` is how long upstream keeps
+   feeding the cell, after which the loop drains what is left.
 2. This chapter renders quickly in simulation. Set the one argument to `False` to pace the same
    orchestration loop with real elapsed time.
-3. Arrival deadlines are relative to the selected clock's starting point. That makes the same
-   generated worklist valid whether `now()` begins at virtual zero or at the operating system's
-   current monotonic value.
-4. A plate off an extraction step is rarely full. Varying the count is what keeps the channel
+3. Arrivals start from the clock's own zero, so the same code is valid whether `now()` begins at
+   virtual zero or at the operating system's current monotonic value.
+4. The gap is drawn before the cutoff is checked, so the window closes on a real draw rather than
+   on a plate count decided in advance.
+5. A plate off an extraction step is rarely full. Varying the count is what keeps the channel
    arithmetic below honest: nothing may assume eight.
+
+A generator is the whole mechanism here: it is suspended between arrivals, holds `t` and `n` as
+ordinary local variables, and produces a plate only when the loop asks for one. An exponential gap
+means the process has no memory — how long the cell has already waited says nothing about how much
+longer it will. That is what makes the stacker depth, and the wait times below, worth simulating
+rather than reasoning about.
 
 ### Load and process
 
-Upstream sets each arrived plate on top of the input stacker. The robot is not involved:
+Upstream sets each arrived plate on top of the input stacker. The robot is not involved, and the
+row is written at the moment the plate is real — the database records what happened, never what is
+scheduled to:
 
 ```{python}
 #| label: cell-cell-load
-def load_arrivals(now):
-    rows = db.execute(
-        """
-        SELECT plate, concs FROM plates
-        WHERE arrived <= ? AND loaded IS NULL
-        ORDER BY arrived
-        """,
-        (now,),
-    ).fetchall()
+def load_plate(arrived, plate_id, concs):
+    plate = cor_96_wellplate_360uL_Fb(name=plate_id)
 
-    for plate_id, concs in rows:
-        plate = cor_96_wellplate_360uL_Fb(name=plate_id)
+    for well in plate[: len(concs)]:                     # <1>
+        well.set_volume(V_SAMPLE)
 
-        for well in plate[: len(json.loads(concs))]:     # <1>
-            well.set_volume(V_SAMPLE)
-
-        inp.assign_child_resource(plate)
-        db.execute(
-            "UPDATE plates SET loaded=1 WHERE plate=?",
-            (plate_id,),
-        )
+    inp.assign_child_resource(plate)
+    db.execute(
+        "INSERT INTO plates(plate, arrived, concs) VALUES (?,?,?)",
+        (plate_id, arrived, json.dumps(concs)),
+    )
     db.commit()
 ```
 
@@ -320,13 +343,10 @@ def load_arrivals(now):
    rather than indexing back into the plate. Only the occupied wells get a volume; the rest are
    empty, and the volume tracker will say so if the protocol reaches for one.
 
-One plate through the cell. `handle_errors` is the wrapper from
-[chapter 15](15_compose_behaviour.qmd#recovery). Two things vary per plate now — how many samples it
-carries, and which of those need buffer at all — and both are handled the same way, by choosing
-channels rather than by padding volumes:
+`handle_errors` is the wrapper from [chapter 15](15_compose_behaviour.qmd#recovery):
 
 ```{python}
-#| label: cell-cell-normalize
+#| label: cell-cell-wrapper
 #| output: false
 import functools
 
@@ -339,7 +359,18 @@ def handle_errors(fn):
             log.exception("%s failed", fn.__name__)
             raise
     return wrapper
+```
 
+It writes to the run's own process log, so a failure is recorded in the run directory next to the
+data it failed to produce.
+
+Now one plate through the cell. Two things vary per plate — how many samples it carries, and which
+of those need buffer at all — and both are handled the same way, by choosing channels rather than by
+padding volumes:
+
+```{python}
+#| label: cell-cell-normalize
+#| output: false
 @handle_errors
 async def normalize(plate, concs, tip_column):
     rows = [plan_well(c) for c in concs]                        # <1>
@@ -410,11 +441,6 @@ Everything the run reads or writes is behind a name, so the loop itself is only 
 ```{python}
 #| label: cell-cell-record
 #| output: false
-def next_arrival():
-    return db.execute(
-        "SELECT MIN(arrived) FROM plates WHERE finished IS NULL"
-    ).fetchone()[0]
-
 def worklist(plate):
     (concs,) = db.execute(
         "SELECT concs FROM plates WHERE plate=?", (plate.name,)
@@ -463,26 +489,28 @@ records the consequence:
 ```{python}
 #| label: cell-cell-run
 #| output: false
-tip_columns = (rack.column(c) for c in range(rack.num_items_x))  # <1>
+stream = arrivals(sim_rng, start=clock.now(), until=WINDOW)
+pending = next(stream, None)                                     # <1>
+tip_columns = (rack.column(c) for c in range(rack.num_items_x))  # <2>
 
 while True:
-    load_arrivals(clock.now())
+    while pending is not None and pending[0] <= clock.now():     # <3>
+        load_plate(*pending)
+        pending = next(stream, None)
 
     if len(inp.children) == 0:
-        nxt = next_arrival()
-
-        if nxt is None:
+        if pending is None:                                      # <4>
             break
 
-        await clock.wait_until(nxt)                              # <2>
+        await clock.wait_until(pending[0])                       # <5>
         continue
 
-    plate = inp.get_top_item()                                   # <3>
+    plate = inp.get_top_item()                                   # <6>
     samples = worklist(plate)
     started = clock.now()
 
     await lh.move_plate(plate, carrier[1])
-    rows = await normalize(plate, samples, next(tip_columns))    # <4>
+    rows = await normalize(plate, samples, next(tip_columns))    # <7>
     await lh.move_plate(plate, out)
     await clock.wait(SERVICE)
 
@@ -491,13 +519,18 @@ while True:
 close_run()
 ```
 
-1. One tip column per plate — eight spots, one per channel, out of the rack's twelve columns. A
+1. The one plate the cell knows about and has not received yet. Everything after it is undrawn.
+2. One tip column per plate — eight spots, one per channel, out of the rack's twelve columns. A
    plate off an extraction step carries at most eight samples, so a column covers any of them, and
    the plate takes only the spots its `use_channels` names. When the rack is spent, `next()` raises
    `StopIteration`, which is the true statement: this cell has run out of tips.
-2. No sleeping. Idle time is a jump.
-3. `get_top_item()` is the only plate the gripper can reach.
-4. A plate's tips are its own column, so nothing is shared between plates and the mapping from spot
+3. Sampled here, inside the loop, against the clock the cell is running on — none, one, or several
+   if the cell stayed busy through more than one gap. Nothing was decided before the run started.
+4. Empty stacker and no undelivered plate: the window has closed and the backlog is drained.
+5. No sleeping. Idle time is a jump — and the cell is idle only because the stacker is empty and the
+   next plate is not due yet.
+6. `get_top_item()` is the only plate the gripper can reach.
+7. A plate's tips are its own column, so nothing is shared between plates and the mapping from spot
    to channel is the same index in both.
 
 ```{python}
@@ -603,5 +636,7 @@ equipment.
   than individual values. Set the tolerance wider than the simulated measurement noise.
 - The resource tree is the check that a move was physically possible; chatterbox validates state,
   not physics.
+- Sample the upstream process inside the loop, one arrival at a time, against the same clock the
+  cell runs on. A schedule generated in advance is a replay, not a simulation of arrivals.
 - Queue discipline is a property of the equipment. A `ResourceStack` is a stack, and serving from it
   is LCFS: same mean wait as FIFO, much heavier tail.
