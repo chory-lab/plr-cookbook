@@ -89,7 +89,7 @@ def quantify(true_conc, cv=0.03):
 
 ::: {.recipe}
 
-Normalizing concentrations is one of the most widespread operations in lab automation. Here we will design a workcell that can handle an asynchronously populated
+Normalizing concentrations in samples is one of the most widespread operations in lab automation. Here we will design a workcell that can handle an asynchronously populated
 stack of 96-well plates with samples that we must normalize. Arrival times are random, numbers of samples are random, concentrations are random.  
 
 ```text
