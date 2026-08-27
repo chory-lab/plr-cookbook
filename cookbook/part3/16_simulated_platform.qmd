@@ -159,10 +159,7 @@ set_tip_tracking(True)
 buffer["A1"][0].set_volume(195_000)
 ```
 
-That is one rack of 96 filtered 200 µL tips and a single-well trough holding 195 mL. The run below
-uses 37 tips and 1.9 mL of buffer, and its most concentrated well takes 83.9 µL — inside one tip, so no well
-needs a second trip to the trough and the refill wrapper from
-[chapter 15](15_compose_behaviour.qmd#recovery) is not needed here.
+That is one rack of 96 filtered 200 µL tips and a single-well trough holding 195 mL.
 
 ### Dilution calculation
 
@@ -408,31 +405,9 @@ async def normalize(plate, concs, tip_column):
    not a no-op worth asking the robot to perform.
 
 That is one `aspirate` and one `dispense` for the whole plate, not a loop of single transfers. The
-backend sees every active channel move together, each carrying its own volume — this is a
-seven-sample plate whose second and fifth wells were already at target:
-
-```text
-Aspirating:
-pip#  vol(ul)  resource          offset
-  p0: 39.5     buffer_well_A1    0,24.0,0
-  p2: 61.2     buffer_well_A1    0,12.0,0
-  p3: 24.4     buffer_well_A1    0,0,0
-  p5: 83.9     buffer_well_A1    0,-12.0,0
-  p6: 12.0     buffer_well_A1    0,-24.0,0
-Dispensing:
-  p0: 39.5     p_well_A1
-  p2: 61.2     p_well_C1
-  p3: 24.4     p_well_D1
-  p5: 83.9     p_well_F1
-  p6: 12.0     p_well_G1
-```
-
-Three things are worth reading off that. The gaps at `p1` and `p4` are the wells that needed nothing
-— idle channels never picked up a tip. The active channels carry their own volumes and travel to
-their own wells and tip slots — `use_channels=need` says which channels act, and none is pinned to a
-rack row. And the trough offsets were not asked for: PLR spread the active channels across the
-reservoir on its own.
-
+backend sees every active channel move together, each carrying its own volume: `use_channels=need`
+says which channels act, no channel is pinned to a rack row, and the trough offsets are not asked
+for — PLR spreads the active channels across the reservoir on its own.
 
 ### Run it
 
