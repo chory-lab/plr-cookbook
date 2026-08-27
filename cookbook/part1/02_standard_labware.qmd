@@ -170,6 +170,80 @@ is where it was — which is exactly the off-deck bookkeeping problem in [chapte
 
 ---
 
+## Ask a resource what it is {#properties}
+
+::: {.recipe}
+
+A definition carries the dimensions you would otherwise look up in a vendor drawing. Everything
+here is local geometry — it answers whether or not the resource is on a deck.
+
+```{python}
+#| label: cell-properties
+well = plate.get_well("A1")
+
+print("footprint: ", plate.get_size_x(), "x",
+      plate.get_size_y(), "x", plate.get_size_z(), "mm")
+print("grid:      ", plate.num_items, "wells,",
+      f"{plate.num_items_x} x {plate.num_items_y}")
+print("pitch:     ", round(plate.item_dx, 1), "x",
+      round(plate.item_dy, 1), "mm")                    # <1>
+print("well depth:", well.get_size_z(), "mm")
+print("well max:  ", well.max_volume, "uL")             # <2>
+```
+
+1. `item_dx` / `item_dy` are the center-to-center well spacing. 9.0 mm is the SBS standard for a
+   96-well plate; a 384 reports 4.5.
+2. The capacity the volume tracker checks a dispense against — exceeding it is
+   `TooLittleVolumeError` ([chapter 10](../part2/10_errors.qmd#portable-errors)). `set_volume()`
+   does not check it.
+
+**Where it is** needs the deck, because a position only exists relative to a parent:
+
+```{python}
+#| label: cell-position
+print("plate: ", plate.get_absolute_location())
+print("A1:    ", well.get_absolute_location())          # <1>
+print("A1 c:  ", well.get_absolute_location(
+    x="c", y="c", z="cavity_bottom"))                   # <2>
+print("top:   ", round(plate.get_highest_known_point(), 2), "mm")   # <3>
+```
+
+1. Absolute deck coordinates, resolved through the whole parent chain — well to plate to carrier
+   site to deck.
+2. The anchors pick which point of the resource to report: `"c"` for center, and `z` also takes
+   `"cavity_bottom"`, which is where a channel bottoms out. Without them you get the front-left-bottom
+   corner, which is rarely the point you want to pipette at.
+3. The tallest known point above the deck, which is what a traverse height has to clear.
+
+::: {.callout-warning title="Gotcha: absolute queries raise off-deck"}
+
+An unassigned resource has no position to report — not `(0, 0, 0)`, but `NoLocationError`:
+
+```{python}
+#| label: cell-no-location
+loose = cor_96_wellplate_360uL_Fb(name="not_on_deck")
+
+try:
+    loose.get_absolute_location()
+except Exception as e:
+    print(type(e).__name__, "-", e)
+
+print("but its geometry still answers:", loose.get_size_x(), "mm")
+```
+
+Local geometry is a property of the definition; absolute position is a property of the tree. This
+is the same distinction as the lookup gotcha above — the tree is state.
+:::
+
+**See also:** what a *tip* carries is the same idea one class over
+([chapter 8](../part2/08_tips.qmd#tip-properties)); the volume in a well is read through its tracker
+([chapter 5](05_indexing.qmd#summary-map)) and serialized in
+[chapter 11](../part2/11_state.qmd#save-state).
+
+:::
+
+---
+
 ## Search the library {#query}
 
 ::: {.recipe}
@@ -226,3 +300,6 @@ and [chapter 7](../part2/07_worklists.qmd).
 - Names are unique per deck, enforced at assignment time. `get_resource` is a safe lookup.
 - `query` filters by type/regex/coordinates but prunes non-matching branches — use it on flat
   collections, not whole decks.
+- A definition answers its own geometry off-deck — footprint, grid, pitch, well depth and capacity.
+  Absolute position is not geometry: it needs a parent chain, and raises `NoLocationError` without
+  one.

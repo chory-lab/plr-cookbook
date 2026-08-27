@@ -149,12 +149,88 @@ await lh.drop_tips(tip_rack["A2"])
 ::: {.callout-warning title="Gotcha: `liquid_height` is distance from the bottom, not a z-coordinate"}
 
 2.0 means "2 mm above the well bottom", whatever the well's total depth. It is not an absolute z.
-If you meant "near the surface of a 100 µL column", compute that from the volume first — chapter 17
-covers the volume↔height math.
+If you meant "near the surface of a 100 µL column", compute that from the volume first — the next
+recipe does exactly that.
 :::
 
 **See also:** `flow_rates`, `liquid_height`, and `blow_out_air_volume` accept per-channel lists so
 channels can behave differently; `use_channels` (below) is how you address a subset.
+
+:::
+
+---
+
+## Follow the liquid surface down {#volume-height}
+
+::: {.recipe}
+
+Ask a well how full it is, and how high that liquid stands.
+
+```{python}
+#| label: cell-volume-state
+well = plate["A6"][0]
+well.set_volume(100)                                   # <1>
+
+print("used: ", well.tracker.get_used_volume(), "uL")
+print("free: ", well.tracker.get_free_volume(), "uL")  # <2>
+print("max:  ", well.max_volume, "uL")
+```
+
+1. Writing the tracker directly, the way [chapter 5](05_indexing.qmd#summary-map) fills a plate.
+   Aspirating and dispensing move the same number when volume tracking is on
+   ([chapter 1](01_robot_on_screen.qmd#first-robot)).
+2. `get_free_volume()` is `max_volume` minus what is in there — the headroom a dispense has before
+   it raises `TooLittleVolumeError` ([chapter 10](../part2/10_errors.qmd#portable-errors)).
+
+Volume is not height. The well's own geometry converts between them:
+
+```{python}
+#| label: cell-liquid-height
+print("has geometry:", well.supports_compute_height_volume_functions())   # <1>
+print("100 uL stands:", round(well.compute_height_from_volume(100), 2), "mm")
+print("250 uL stands:", round(well.compute_height_from_volume(250), 2), "mm")
+print("5 mm holds:   ", round(well.compute_volume_from_height(5), 1), "uL")
+print("well depth:   ", well.get_size_z(), "mm")                          # <2>
+```
+
+1. Not every definition carries the curve. Check before trusting it — a definition without one
+   raises rather than guessing, and this is the gate that tells you which you have.
+2. The math is about the *cavity*, not the plastic: 250 µL stands 7.72 mm up a well that is
+   10.67 mm deep.
+
+Which is what makes "aspirate just under the surface" writable. `liquid_height` is measured from
+the bottom, so the surface of the current volume is the number to start from:
+
+```{python}
+#| label: cell-below-surface
+#| output: false
+surface = well.compute_height_from_volume(
+    well.tracker.get_used_volume()
+)                                                      # <1>
+
+await lh.pick_up_tips(tip_rack["A6"])
+await lh.aspirate(
+    plate["A6"], vols=[20],
+    liquid_height=[max(0.5, surface - 2.0)],           # <2>
+)
+await lh.drop_tips(tip_rack["A6"])
+```
+
+1. The height of the liquid that is in the well *now* — 3.22 mm for the 100 µL set above.
+2. Two millimetres below the surface, floored so a nearly empty well cannot drive the tip into the
+   bottom. Chasing the surface down matters when the tip must not be dragged through the whole
+   column, or when carryover on the outside of the tip is the thing you are avoiding.
+
+::: {.callout-warning title="Gotcha: the tracker is a model, and it does not follow the tip down"}
+
+`compute_height_from_volume` answers from the volume the tracker *believes*. It is right only if
+every transfer in and out of that well went through PLR with tracking on. A well filled by hand,
+or one whose tracking was suppressed ([chapter 10](../part2/10_errors.qmd#no-tracking)), reports a
+surface that is not there. PLR has no level sensing behind this number.
+:::
+
+**See also:** the volume↔height functions are supplied when a definition is written — writing them
+for your own labware is [chapter 17](../part4/17_custom_labware.qmd#geometry).
 
 :::
 
@@ -349,5 +425,8 @@ offsets.
 - One resource + many channels means `[well] * n` + `use_channels` + `spread`; `spread` places the
   channels and computes the offsets for you.
 - `mix=[Mix(...)]` replaces hand-rolled mixing loops.
+- A well converts volume to height and back through its own geometry, gated by
+  `supports_compute_height_volume_functions()`. That is how you aspirate below a falling surface
+  instead of at a fixed height -- and it is only as true as the tracker behind it.
 - Too many channels for a well: `ValueError` on plain wells, `ChannelsDoNotFitError` with
   no-go zones. Check `get_channel_spacings` and plan accordingly.
