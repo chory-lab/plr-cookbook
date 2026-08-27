@@ -377,15 +377,6 @@ Three things are worth reading off that. The gaps at `p1` and `p4` are the wells
 spacing showing through. And the trough offsets were not asked for: PLR spread the active channels
 across the reservoir on its own.
 
-What this does **not** do is reuse tips between plates. These tips only ever touch buffer, so a
-non-contact dispense above the liquid surface would let one set of eight serve all six plates —
-eight tips instead of thirty-four.
-
-That is a method-development decision, not a code cleanup, and it is worth knowing that nothing in
-the library will check it for you. `CrossContaminationError` exists and is never raised
-([chapter 10](../part2/10_errors.qmd#dead-errors)): volume tracking will tell you a tip went dry,
-and tip tracking will tell you a spot is empty, but no tracker knows what a tip has touched. Reusing
-tips is the point where simulation stops helping and the liquid-class work starts.
 
 ### Run it
 
