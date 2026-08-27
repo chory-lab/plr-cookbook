@@ -175,19 +175,7 @@ def plan_well(conc):
         return 0.0, "overflow"
 
     return round(buffer_vol, 1), "ok"                   # <3>
-```
 
-1. A well already at or below target cannot be brought *up* by dilution. It goes forward untouched
-   and flagged, because the honest output of a normalization step is "here is what I could not do".
-2. The other bound is the labware. A sample concentrated enough to need more buffer than the well
-   holds needs an intermediate transfer, which this cell does not do.
-3. Channels dispense in 0.1 µL steps, so the plan is rounded to what the instrument can actually
-   deliver.
-
-```{python}
-#| label: cell-cell-plan-run
-for conc in [48.0, 112.4, 9.1, 6000.0]:
-    print(conc, plan_well(conc))
 ```
 
 ### Record the run
