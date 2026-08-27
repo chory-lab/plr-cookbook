@@ -1,5 +1,5 @@
 ---
-title: "When it complains"
+title: "Errors"
 ---
 
 PLR raises errors from two places.
