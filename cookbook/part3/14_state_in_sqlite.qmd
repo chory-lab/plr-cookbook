@@ -65,10 +65,7 @@ Insert or update wells:
 now = datetime.now().isoformat(timespec="seconds")
 
 db.executemany(
-    """
-    INSERT OR REPLACE INTO samples
-    VALUES (?, ?, ?, ?, ?, ?)
-    """,
+    "INSERT OR REPLACE INTO samples VALUES (?, ?, ?, ?, ?, ?)",
     [
         (run_id, "plate_1", "A1", "S001", 100, now),
         (run_id, "plate_1", "B1", "S002", 100, now),
@@ -88,12 +85,8 @@ Read the plate map later:
 ```{python}
 #| label: cell-sqlite-read
 rows = db.execute(
-    """
-    SELECT well, sample_id, volume_ul
-    FROM samples
-    WHERE run_id = ? AND plate = ?
-    ORDER BY well
-    """,
+    "SELECT well, sample_id, volume_ul FROM samples "
+    "WHERE run_id = ? AND plate = ? ORDER BY well",
     (run_id, "plate_1"),
 )
 
@@ -170,29 +163,16 @@ Submit work by inserting a row:
 
 ```{python}
 #| label: cell-scheduler-submit
-def submit(
-    db,
-    operation,
-    resource,
-    payload=None,
-    priority=0,
-    not_before=0,
-):
+def submit(db, operation, resource, payload=None,
+           priority=0, not_before=0):
     db.execute(
         """
         INSERT INTO jobs
-        (operation, resource, payload,
-         priority, not_before, created)
+        (operation, resource, payload, priority, not_before, created)
         VALUES (?, ?, ?, ?, ?, ?)
         """,
-        (
-            operation,
-            resource,
-            json.dumps(payload or {}),
-            priority,
-            not_before,
-            time.time(),
-        ),
+        (operation, resource, json.dumps(payload or {}),
+         priority, not_before, time.time()),
     )
     db.commit()
 ```
@@ -202,13 +182,8 @@ For example:
 ```{python}
 #| label: cell-scheduler-submit-use
 #| output: false
-submit(
-    db,
-    operation="read_plate",
-    resource="reader",
-    payload={"plate": "plate_1"},
-    priority=10,
-)
+submit(db, "read_plate", "reader",
+       payload={"plate": "plate_1"}, priority=10)
 ```
 
 Find the next eligible job for one resource:
@@ -285,15 +260,15 @@ The execution runtime is separate. One worker could be synchronous:
 ```python
 #| eval: false
 while True:
-    job = next_job(db, "reader", time.time())
+    now = time.time()
+    job = next_job(db, "reader", now)
 
     if job is None:
         time.sleep(0.1)
         continue
 
     job_id, operation, payload = job
-
-    if not claim(db, job_id, time.time()):
+    if not claim(db, job_id, now):          # <1>
         continue
 
     try:
@@ -303,6 +278,9 @@ while True:
     else:
         finish(db, job_id, time.time(), "complete")
 ```
+
+1. Read and claim on the same instant. Another worker may have taken the job in between, which is
+   exactly what `claim` returning `False` means.
 
 Another implementation could use threads, processes, `asyncio`, or workers on separate computers.
 The queue does not depend on any of them.
@@ -314,13 +292,9 @@ The queue does not depend on any of them.
 ```{python}
 #| label: cell-scheduler-delayed
 #| output: false
-submit(
-    db,
-    operation="read_plate",
-    resource="reader",
-    payload={"plate": "plate_1"},
-    not_before=time.time() + 1800,
-)
+submit(db, "read_plate", "reader",
+       payload={"plate": "plate_1"},
+       not_before=time.time() + 1800)
 ```
 
 The scheduler does not need to sleep for thirty minutes. The row sits in the table, and `next_job`
