@@ -83,7 +83,7 @@ plate sits and is [required in 0.2.2](../part4/17_custom_labware.qmd) — omit i
 
 ---
 
-## Where is this thing, really {#locations}
+## Coordinates of a resource {#locations}
 
 ::: {.recipe}
 
