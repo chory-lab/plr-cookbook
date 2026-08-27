@@ -2,7 +2,7 @@
 title: "Backend kwargs and real hardware"
 ---
 
-## Setup {.unnumbered}
+:::: {.callout-note collapse="true" title="Setup"}
 
 ```{python}
 #| label: cell-setup
@@ -42,6 +42,8 @@ await star.pick_up_tips(star_rack["A1"])
 1. **Not exported from the `backends` package** — this is the full import path. `from
    pylabrobot.liquid_handling.backends import STARChatterboxBackend` fails.
 2. Both backends get the same deck, so the recipes below differ only in the backend.
+::::
+
 
 ---
 

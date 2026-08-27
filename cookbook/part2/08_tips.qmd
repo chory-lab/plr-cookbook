@@ -2,7 +2,7 @@
 title: "Tip management"
 ---
 
-## Setup {.unnumbered}
+:::: {.callout-note collapse="true" title="Setup"}
 
 ```{python}
 #| include: false
@@ -55,6 +55,8 @@ logging.getLogger("pylabrobot.resources").setLevel(logging.WARNING)   # <3>
    in a real run those lines are the audit trail of which tip went where.
 4. A plate to pipette into, so the streaming recipe below can run a real
    pick-up → aspirate → dispense → discard cycle rather than just naming spots.
+::::
+
 
 ---
 

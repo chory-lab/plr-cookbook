@@ -5,7 +5,7 @@ title: "Define custom labware: a PCR plate"
 **0.2.2 ships no PCR plate.** `nest_96_wellplate_100ul_pcr_full_skirt` existed in older PLR and has
 no replacement.
 
-## Setup {.unnumbered}
+:::: {.callout-note collapse="true" title="Setup"}
 
 ```{python}
 #| label: cell-setup
@@ -24,6 +24,8 @@ from pylabrobot.resources.height_volume_functions import (
     calculate_liquid_height_in_container_2segments_round_vbottom,
 )
 ```
+::::
+
 
 ---
 

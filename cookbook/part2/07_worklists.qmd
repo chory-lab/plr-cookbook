@@ -4,7 +4,7 @@ title: "Worklists and data formats"
 Worklists are lists of source and destination pairs for liquid containers on a robot deck. They are one of the most common
 ways to specify how liquids are transfered in a script.
 
-## Setup {.unnumbered}
+:::: {.callout-note collapse="true" title="Setup"}
 
 ```{python}
 #| include: false
@@ -54,6 +54,8 @@ run puts inputs *and* outputs in one timestamped run directory —
 `itertools.groupby` (with `operator.itemgetter` as its key) collapses repeated rows into one robot
 move.
 :::
+::::
+
 
 ---
 

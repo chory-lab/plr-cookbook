@@ -4,7 +4,7 @@ title: "Keep state in SQLite"
 
 SQLite is a file-based database engine that is very useful for storing persistent, structured data like sample identities, protocol start times, and measurements in a 96-well plate. SQLite gives the concurrency and robustness of a database engine while being very easy to spin up and use.
 
-## Setup {.unnumbered}
+:::: {.callout-note collapse="true" title="Setup"}
 
 ```{python}
 #| include: false
@@ -43,6 +43,8 @@ clock = SimClock()
 1. A clock that never waits, so the delayed-work cell at the end can show "thirty minutes later"
    without sleeping. The [simulation chapter](16_simulated_platform.qmd#simulation) builds on the
    same idea.
+::::
+
 
 ---
 

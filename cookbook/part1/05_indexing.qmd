@@ -2,7 +2,7 @@
 title: "Indexing"
 ---
 
-## Setup {.unnumbered}
+:::: {.callout-note collapse="true" title="Setup"}
 
 ```{python}
 #| label: cell-setup
@@ -28,6 +28,8 @@ Slices (`"A1:H1"`), `__getitem__` (the `plate[...]` spelling), comprehensions
 (`[w for w in ...]`), and generators (`traverse` yields on demand). If a loop you are writing
 walks a grid, there is probably a built-in for it.
 :::
+::::
+
 
 ---
 

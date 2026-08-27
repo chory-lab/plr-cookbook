@@ -5,7 +5,7 @@ title: "Log and organize runs"
 Logging the actions that a robot takes is critical for all live protocols. Logs are indispensable for diagnosing problems and
 for ensuring the validity of scientific data produced by automated experiments. 
 
-## Setup {.unnumbered}
+:::: {.callout-note collapse="true" title="Setup"}
 
 ```{python}
 #| include: false
@@ -52,6 +52,8 @@ run_id = datetime.now().strftime("%Y%m%d_%H%M%S")   # <1>
 1. One run identifier, computed once and reused everywhere below — in the log lines, in the
    directory name, and in the manifest. Re-deriving it at each use site is a common way to end up
    with a manifest that disagrees with the directory it sits in.
+::::
+
 
 ---
 

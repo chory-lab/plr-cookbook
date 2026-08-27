@@ -5,7 +5,7 @@ title: "Standard labware"
 Labware in PyLabRobot ships as generic geometric definitions in Python, and is reusable across instruments. Individual labware items
 are stateful and can be queried for different properties such as location or liquid volume. 
 
-## Setup {.unnumbered}
+:::: {.callout-note collapse="true" title="Setup"}
 
 ```{python}
 #| label: cell-setup
@@ -31,6 +31,8 @@ carrier[1] = trough = nest_1_troughplate_195000uL_Vb(name="buffer")
 
 `carrier[0] = plate` — the same `__setitem__` assignment you met in [chapter 1](../part1/01_robot_on_screen.qmd). It assigns the plate to the carrier's site 0.
 :::
+::::
+
 
 ---
 

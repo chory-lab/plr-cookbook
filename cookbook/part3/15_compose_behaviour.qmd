@@ -6,7 +6,7 @@ The same behaviour repeatedly surrounds protocol functions: error handling, tip 
 tip-volume control. This chapter wraps those concerns in decorators so the protocol body contains
 only the transfer itself.
 
-## Setup {.unnumbered}
+:::: {.callout-note collapse="true" title="Setup"}
 
 ```{python}
 #| include: false
@@ -63,6 +63,8 @@ if not any(isinstance(h, logging.Handler) for h in protocol_log.handlers):
 
 1. The [logging chapter](13_record_runs.qmd#logging) explains the handler split; here one file
    handler is enough, and the last recipe reads it back.
+::::
+
 
 ---
 

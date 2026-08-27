@@ -2,7 +2,7 @@
 title: "Pipetting"
 ---
 
-## Setup {.unnumbered}
+:::: {.callout-note collapse="true" title="Setup"}
 
 ```{python}
 #| label: cell-setup
@@ -37,6 +37,8 @@ trough["A1"][0].set_volume(10000)          # a source that has liquid
 Every recipe does a pick-up-then-pipette-then-drop cycle. The tip mechanics are the subject of
 [chapter 8](../part2/08_tips.qmd); here tips just *work*.
 :::
+::::
+
 
 ---
 
