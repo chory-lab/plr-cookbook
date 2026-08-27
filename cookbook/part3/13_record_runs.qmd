@@ -8,9 +8,18 @@ for ensuring the validity of scientific data produced by automated experiments.
 ## Setup {.unnumbered}
 
 ```{python}
+#| include: false
+import pathlib, sys
+_d = pathlib.Path.cwd()
+sys.path.insert(0, str(next(x for x in [_d, *_d.parents] if (x / "_fixture.py").exists())))
+from _fixture import sandbox
+sandbox("record_runs")
+```
+
+```{python}
 #| label: cell-setup
 #| output: false
-import json, logging, tempfile
+import json, logging
 from datetime import datetime
 from pathlib import Path
 
@@ -37,10 +46,12 @@ set_volume_tracking(True)
 set_tip_tracking(True)
 plate["A1"][0].set_volume(1000)
 
-scratch = Path(tempfile.mkdtemp(prefix="cookbook_record_"))
-run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-print("scratch:", scratch)
+run_id = datetime.now().strftime("%Y%m%d_%H%M%S")   # <1>
 ```
+
+1. One run identifier, computed once and reused everywhere below — in the log lines, in the
+   directory name, and in the manifest. Re-deriving it at each use site is a common way to end up
+   with a manifest that disagrees with the directory it sits in.
 
 ---
 
@@ -79,7 +90,7 @@ A console can show only process-level information while a file records everythin
 console = logging.StreamHandler()          # <1>
 console.setLevel(logging.INFO)
 
-run_log = logging.FileHandler(scratch / "run.log")   # <2>
+run_log = logging.FileHandler("run.log")   # <2>
 run_log.setLevel(LOG_LEVEL_IO)
 run_log.setFormatter(logging.Formatter(
     "%(asctime)s %(name)-24s %(levelname)-5s %(message)s"
@@ -122,7 +133,7 @@ The process and command tiers interleave in the file:
 
 ```{python}
 #| label: cell-log-out
-for line in (scratch / "run.log").read_text().splitlines():
+for line in Path("run.log").read_text().splitlines():
     print(line[:104])
 ```
 
@@ -183,7 +194,7 @@ Create one:
 
 ```{python}
 #| label: cell-run-data
-run_dir = scratch / "camp_screen" / datetime.now().strftime("%Y%m%d_%H%M%S")   # <1>
+run_dir = Path("experiments/camp_screen") / f"{run_id}_plate001"   # <1>
 for subdir in ["inputs", "raw", "derived", "logs", "state"]:
     (run_dir / subdir).mkdir(parents=True, exist_ok=True)   # <2>
 
@@ -191,8 +202,12 @@ print(run_dir)
 print(sorted(p.name for p in run_dir.iterdir()))
 ```
 
-1. A sortable timestamp plus something identifying, so directory listings order themselves.
-2. `mkdir(parents=True, exist_ok=True)` builds the whole chain in one call.
+1. A sortable timestamp plus something identifying, so directory listings order themselves and two
+   runs started in the same second cannot collide. `exist_ok=True` below would otherwise merge
+   them into one directory rather than complaining.
+2. `mkdir(parents=True, exist_ok=True)` builds the whole chain in one call. This is
+   `os.makedirs(path, exist_ok=True)` — the same call, reached through `Path`, which composes
+   better with the reads and writes that follow.
 
 Write a small manifest:
 

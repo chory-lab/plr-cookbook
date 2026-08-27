@@ -288,6 +288,69 @@ steps in order to get good results.
 
 ---
 
+## Start independent machines at the same time {#concurrent}
+
+::: {.recipe}
+
+The workcell recipe above starts each machine in turn, so the run waits for the liquid handler to
+home, *then* waits for the thermocycler to answer, *then* waits for the incubator. Those waits have
+nothing to do with each other. `asyncio.gather` issues them together and returns when the last one
+finishes:
+
+```{python}
+#| label: cell-concurrent
+import asyncio
+
+await asyncio.gather(lh.setup(), tc.setup(), inc.setup())   # <1>
+
+print("lid open:", await tc.get_lid_open())                 # <2>
+print("free sites:", inc.get_num_free_sites())
+
+await asyncio.gather(lh.stop(), tc.stop(), inc.stop())      # <3>
+```
+
+1. Three coroutines, one wait. `gather` schedules them on the same event loop and resumes each one
+   as its machine answers, so the total is roughly the slowest setup rather than the sum of all
+   three.
+2. Both machines are up here — `gather` does not return until every coroutine it was given has
+   finished.
+3. Shutdown parallelizes the same way. `gather` propagates the first exception it sees, so a
+   machine that fails to stop still surfaces.
+
+This is the reason PLR is `async` at all. A protocol that only ever awaits one machine could have
+been written with blocking calls; the concurrency is what `async` buys you.
+
+::: {.callout-warning title="Gotcha: concurrency is per machine, not per channel"}
+
+`gather` is safe across machines that are **genuinely independent** — separate devices on separate
+connections. It is not a way to parallelize *one* machine:
+
+```{python}
+#| eval: false
+await asyncio.gather(                       # WRONG
+    lh.aspirate(plate["A1"], vols=[100]),
+    lh.aspirate(plate["A2"], vols=[100]),
+)
+```
+
+One `LiquidHandler` has one set of channels and one connection to the backend. Overlapping two
+operations on it races them against each other — interleaved firmware commands, and tracking state
+updated from both at once. Await those in sequence, and reach for `gather` only at the boundary
+between machines.
+
+:::
+
+With chatterbox backends nothing measurable overlaps here: the simulated machines answer instantly,
+so there is no I/O to wait through. The shape is what matters — on hardware, the three setups
+proceed at once.
+
+**See also:** [chapter 16](../part3/16_simulated_platform.qmd#simulation) puts this on a simulated
+clock, where overlapping a long instrument step with other work has a visible effect on the total.
+
+:::
+
+---
+
 ## Shut down cleanly {#setup-stop}
 
 ::: {.recipe}

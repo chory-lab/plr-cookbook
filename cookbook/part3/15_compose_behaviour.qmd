@@ -9,9 +9,18 @@ only the transfer itself.
 ## Setup {.unnumbered}
 
 ```{python}
+#| include: false
+import pathlib, sys
+_d = pathlib.Path.cwd()
+sys.path.insert(0, str(next(x for x in [_d, *_d.parents] if (x / "_fixture.py").exists())))
+from _fixture import sandbox
+sandbox("compose")
+```
+
+```{python}
 #| label: cell-setup
 #| output: false
-import functools, logging, tempfile
+import functools, logging
 from pathlib import Path
 
 from pylabrobot.liquid_handling import LiquidHandler
@@ -42,17 +51,14 @@ set_tip_tracking(True)
 plate["A1"][0].set_volume(1000)
 trough["A1"][0].set_volume(10000)
 
-scratch = Path(tempfile.mkdtemp(prefix="cookbook_compose_"))
-
 protocol_log = logging.getLogger("protocol")      # <1>
 protocol_log.setLevel(logging.INFO)
 if not any(isinstance(h, logging.Handler) for h in protocol_log.handlers):
-    run_log = logging.FileHandler(scratch / "run.log")
+    run_log = logging.FileHandler("run.log")
     run_log.setFormatter(logging.Formatter(
         "%(asctime)s %(name)-24s %(levelname)-5s %(message)s"
     ))
     protocol_log.addHandler(run_log)
-print("scratch:", scratch)
 ```
 
 1. The [logging chapter](13_record_runs.qmd#logging) explains the handler split; here one file
@@ -291,7 +297,7 @@ covers the whole plate. Each refill is a process-tier log record (the
 
 ```{python}
 #| label: cell-decorator-volume-log
-for line in (scratch / "run.log").read_text().splitlines():
+for line in Path("run.log").read_text().splitlines():
     if "re-aspirating" in line:
         print(line)
 print("leftover per tip:", remaining)
@@ -366,7 +372,7 @@ decision is recorded at the process tier like every other wrapper decision:
 
 ```{python}
 #| label: cell-decorator-try-next-tip-log
-for line in (scratch / "run.log").read_text().splitlines():
+for line in Path("run.log").read_text().splitlines():
     if "trying the next spot" in line:
         print(line)
 ```
@@ -422,7 +428,7 @@ await lh.discard_tips()
 
 ```{python}
 #| label: cell-decorator-try-next-source-log
-for line in (scratch / "run.log").read_text().splitlines():
+for line in Path("run.log").read_text().splitlines():
     if "cannot supply" in line:
         print(line)
 ```

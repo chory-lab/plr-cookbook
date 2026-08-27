@@ -10,13 +10,21 @@ happens to be executing it.
 ## Setup {.unnumbered}
 
 ```{python}
+#| include: false
+import pathlib, sys
+_d = pathlib.Path.cwd()
+sys.path.insert(0, str(next(x for x in [_d, *_d.parents] if (x / "_fixture.py").exists())))
+from _fixture import sandbox
+sandbox("sqlite")
+```
+
+```{python}
 #| label: cell-setup
 #| output: false
-import json, sqlite3, tempfile, time
+import json, sqlite3, time
 from datetime import datetime
 from pathlib import Path
 
-scratch = Path(tempfile.mkdtemp(prefix="cookbook_sqlite_"))
 run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
 
 class SimClock:                       # <1>
@@ -33,7 +41,6 @@ class SimClock:                       # <1>
         self.time = max(self.time, when)
 
 clock = SimClock()
-print("scratch:", scratch)
 ```
 
 1. A clock that never waits, so the delayed-work cell at the end can show "thirty minutes later"
@@ -54,7 +61,7 @@ A plate map can be represented directly:
 ```{python}
 #| label: cell-sqlite-create
 #| output: false
-db = sqlite3.connect(scratch / "samples.sqlite")       # <1>
+db = sqlite3.connect("samples.sqlite")       # <1>
 db.execute("""
     CREATE TABLE IF NOT EXISTS samples (
         run_id      TEXT,

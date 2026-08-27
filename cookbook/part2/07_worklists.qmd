@@ -7,9 +7,18 @@ ways to specify how liquids are transfered in a script.
 ## Setup {.unnumbered}
 
 ```{python}
+#| include: false
+import pathlib, sys
+_d = pathlib.Path.cwd()
+sys.path.insert(0, str(next(x for x in [_d, *_d.parents] if (x / "_fixture.py").exists())))
+from _fixture import sandbox
+sandbox("worklist")
+```
+
+```{python}
 #| label: cell-setup
 #| output: false
-import csv, itertools, pathlib, tempfile
+import csv, itertools, pathlib
 from operator import itemgetter
 
 from pylabrobot.liquid_handling import LiquidHandler
@@ -31,14 +40,11 @@ tips = TIP_CAR_288_C00(name="tip_carrier")
 lh.deck.assign_child_resource(tips, rails=2)
 tips[0] = tip_rack = opentrons_96_filtertiprack_200ul(name="tips")
 
-scratch = pathlib.Path(tempfile.mkdtemp(prefix="cookbook_worklist_"))   # <1>
-print("scratch dir:", scratch)
 ```
 
-1. Recipes write their *outputs* to a throwaway directory, so the notebook leaves nothing behind.
-   Checked-in *inputs* — like this chapter's worklist — live in the cookbook's `data/` directory
-   instead. Real runs use a timestamped run directory for both —
-   [chapter 13](../part3/13_record_runs.qmd#run-data) makes that the rule.
+Paths below are relative to the working directory, with this chapter's inputs under `data/`. A real
+run puts inputs *and* outputs in one timestamped run directory —
+[chapter 13](../part3/13_record_runs.qmd#run-data) makes that the rule.
 
 ::: {.column-margin}
 **Python you need here**
@@ -74,7 +80,7 @@ well (more on that below). Reading it and driving the robot from it:
 ```{python}
 #| label: cell-csv-read
 #| output: false
-worklist = pathlib.Path("../data/worklist.csv")              # <1>
+worklist = pathlib.Path("data/worklist.csv")                 # <1>
 
 with open(worklist, newline="") as f:                        # <2>
     rows = list(csv.DictReader(f))
@@ -152,7 +158,7 @@ Reading it in is the same two lines as any CSV:
 ```{python}
 #| label: cell-transfers-read
 #| output: false
-with open(pathlib.Path("../data/transfers.csv"), newline="") as f:
+with open(pathlib.Path("data/transfers.csv"), newline="") as f:
     pair_rows = list(csv.DictReader(f))
 ```
 
@@ -229,7 +235,7 @@ A1,B4,20
 ```{python}
 #| label: cell-group-sources
 #| output: false
-with open(pathlib.Path("../data/reagents.csv"), newline="") as f:
+with open(pathlib.Path("data/reagents.csv"), newline="") as f:
     reagent_rows = list(csv.DictReader(f))
 
 by_source = itemgetter("source")                                        # <1>
@@ -362,7 +368,7 @@ much buffer dilutes 20 µL of it to 20 ng/µL. Written as the loop it looks like
 ```{python}
 #| label: cell-plate-map-naive
 #| output: false
-with open(pathlib.Path("../data/plate_map.csv"), newline="") as f:
+with open(pathlib.Path("data/plate_map.csv"), newline="") as f:
     plate_map = list(csv.DictReader(f))
 
 TARGET, V_SAMPLE = 20.0, 20.0

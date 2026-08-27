@@ -19,9 +19,18 @@ fed by a plate stacker.
 ## Setup {.unnumbered}
 
 ```{python}
+#| include: false
+import pathlib, sys
+_d = pathlib.Path.cwd()
+sys.path.insert(0, str(next(x for x in [_d, *_d.parents] if (x / "_fixture.py").exists())))
+from _fixture import sandbox
+sandbox("platform")
+```
+
+```{python}
 #| label: cell-setup
 #| output: false
-import asyncio, json, logging, random, sqlite3, tempfile, time
+import asyncio, json, logging, random, sqlite3, time
 from datetime import datetime
 from pathlib import Path
 
@@ -33,9 +42,6 @@ from pylabrobot.resources import (
     opentrons_96_filtertiprack_200ul, ResourceStack, Coordinate,
     set_volume_tracking, set_tip_tracking,
 )
-
-scratch = Path(tempfile.mkdtemp(prefix="cookbook_platform_"))
-print("scratch:", scratch)
 ```
 
 ---
@@ -152,7 +158,6 @@ uses 34 tips and 1.8 mL of buffer, and its most concentrated well takes 83.9 µL
 needs a second trip to the trough and the refill wrapper from
 [chapter 15](15_compose_behaviour.qmd#recovery) is not needed here.
 
-
 ### Dilution calculation
 
 Each well holds `V_SAMPLE` µL at a known concentration. Diluting to `TARGET` means adding buffer
@@ -184,8 +189,20 @@ The run directory and the process log are [chapter 13](13_record_runs.qmd); the 
 #| label: cell-cell-run-dir
 #| output: false
 run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-run_dir = scratch / "runs" / run_id
-(run_dir / "logs").mkdir(parents=True, exist_ok=True)
+run_dir = Path("experiments/normalization") / f"{run_id}_normalization"
+for subdir in ["inputs", "raw", "derived", "logs", "state"]:
+    (run_dir / subdir).mkdir(parents=True, exist_ok=True)
+
+manifest = {
+    "run_id": run_id,
+    "started": datetime.now().isoformat(),
+    "protocol": "normalization",
+    "plates": [],
+    "machines": ["liquid_handler"],
+}
+(run_dir / "manifest.json").write_text(
+    json.dumps(manifest, indent=2)
+)
 
 log = logging.getLogger(f"run.{run_id}")
 log.setLevel(logging.INFO)
@@ -318,7 +335,7 @@ def handle_errors(fn):
     return wrapper
 
 @handle_errors
-async def normalize(plate, concs, spots):
+async def normalize(plate, concs, tips):
     rows = [plan_well(c) for c in concs]                        # <1>
     need = [i for i, (vol, _) in enumerate(rows) if vol > 0]     # <2>
     vols = [rows[i][0] for i in need]
@@ -327,7 +344,7 @@ async def normalize(plate, concs, spots):
         return rows
 
     await lh.pick_up_tips(
-        [spots[i] for i in need], use_channels=need
+        [next(tips) for _ in need], use_channels=need
     )
     await lh.aspirate(
         [buffer["A1"][0]] * len(need),
@@ -373,9 +390,10 @@ Dispensing:
 ```
 
 Three things are worth reading off that. The gaps at `p1` and `p4` are the wells that needed nothing
-— idle channels never picked up a tip. Channel *i* lands in row *i*, which is the head's fixed
-spacing showing through. And the trough offsets were not asked for: PLR spread the active channels
-across the reservoir on its own.
+— idle channels never picked up a tip. The active channels carry their own volumes and travel to
+their own wells and tip slots — `use_channels=need` says which channels act, and none is pinned to a
+rack row. And the trough offsets were not asked for: PLR spread the active channels across the
+reservoir on its own.
 
 
 ### Run it
@@ -387,7 +405,7 @@ records the consequence:
 ```{python}
 #| label: cell-cell-run
 #| output: false
-tip_columns = (rack.column(c) for c in range(rack.num_items_x))   # <1>
+tips = iter(rack.get_all_items())                                # <1>
 
 while True:
     load_arrivals(clock.now())
@@ -413,7 +431,7 @@ while True:
     await lh.move_plate(plate, carrier[1])
 
     samples = json.loads(concs)
-    rows = await normalize(plate, samples, next(tip_columns))     # <4>
+    rows = await normalize(plate, samples, tips)                 # <4>
 
     await lh.move_plate(plate, out)
     await clock.wait(SERVICE)
@@ -435,17 +453,27 @@ while True:
     log.info(
         "%s waited %.0f s", plate.name, started - arrived
     )
+
+manifest["plates"] = [
+    row[0] for row in db.execute(
+        "SELECT plate FROM plates ORDER BY arrived"
+    )
+]
+manifest["finished"] = datetime.now().isoformat()
+(run_dir / "manifest.json").write_text(
+    json.dumps(manifest, indent=2)
+)
 ```
 
-1. One tip column per plate, as a stream. A counter (`column = 1` ... `column += 1`) and an
-   identifier built from it (`rack[f"A{column}:H{column}"]`) would do the same thing here and go
-   quietly wrong at the thirteenth plate; the generator raises `StopIteration` when the rack is
-   spent, which is the true statement — this cell has run out of tips.
+1. One tip per channel that will actually pipette, drawn from a flat stream over the rack's 96
+   spots — `rack.get_all_items()` is the whole rack in fill order. The STAR's channels are
+   independently positionable, so nothing pins channel *i* to row *i*: each plate takes exactly as
+   many tips as it has wells that need buffer. When the rack is spent, `next()` raises
+   `StopIteration`, which is the true statement — this cell has run out of tips.
 2. No sleeping. Idle time is a jump.
 3. `get_top_item()` is the only plate the gripper can reach.
-4. `next()` takes the next column. `rack.column(c)` is the axis view from
-   [chapter 5](../part1/05_indexing.qmd#rows-cols) — the same eight spots as `"A1:H1"`, without
-   spelling out an identifier.
+4. `normalize` consumes the stream, so the tips a plate takes are the next `len(need)` spots and the
+   stream never skips one. The mapping from tip slot to channel is explicit in `use_channels=need`.
 5. The achieved concentration is what the dilution actually produced, seen through a quantification
    with the noise from the first recipe.
 

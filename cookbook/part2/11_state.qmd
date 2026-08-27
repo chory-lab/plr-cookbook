@@ -16,9 +16,18 @@ load the state.
 ## Setup {.unnumbered}
 
 ```{python}
+#| include: false
+import pathlib, sys
+_d = pathlib.Path.cwd()
+sys.path.insert(0, str(next(x for x in [_d, *_d.parents] if (x / "_fixture.py").exists())))
+from _fixture import sandbox
+sandbox("state")
+```
+
+```{python}
 #| label: cell-setup
 #| output: false
-import json, pathlib, tempfile
+import json, pathlib
 
 from pylabrobot.liquid_handling import LiquidHandler
 from pylabrobot.liquid_handling.backends import LiquidHandlerChatterboxBackend
@@ -44,8 +53,6 @@ set_tip_tracking(True)
 
 plate["A1"][0].set_volume(150)        # <1>
 plate["B1"][0].set_volume(75)
-
-scratch = pathlib.Path(tempfile.mkdtemp(prefix="cookbook_state_"))
 ```
 
 1. Two wells with known contents, so there is something for the state file to carry.
@@ -60,7 +67,7 @@ Write the deck to a file, and rebuild it later without re-running the assignment
 
 ```{python}
 #| label: cell-save-layout
-layout = scratch / "layout.json"
+layout = pathlib.Path("layout.json")
 lh.deck.save(str(layout), indent=2)              # <1>
 
 raw = json.loads(layout.read_text())
@@ -107,7 +114,7 @@ Record what is in the wells, and put it back on a deck that has already been reb
 
 ```{python}
 #| label: cell-save-state
-state = scratch / "state.json"
+state = pathlib.Path("state.json")
 lh.deck.save_state_to_file(str(state), indent=2)      # <1>
 
 st = json.loads(state.read_text())
@@ -202,7 +209,7 @@ print("NotAnyClass:  ", find_subclass("NotAnyClass", Resource))    # <2>
 #| label: cell-find-subclass-fail
 broken = json.loads(layout.read_text())
 broken["children"][0]["type"] = "MyCustomCarrier"       # <1>
-broken_file = scratch / "broken.json"
+broken_file = pathlib.Path("broken.json")
 broken_file.write_text(json.dumps(broken))
 
 try:

@@ -31,6 +31,11 @@
   chapter: 1
   apis: "Thermocycler, ThermocyclerChatterboxBackend, Incubator, IncubatorChatterboxBackend, run_pcr_profile"
 
+- title: "Start independent machines at the same time"
+  path: part1/01_robot_on_screen.qmd#concurrent
+  chapter: 1
+  apis: "asyncio.gather, setup, stop"
+
 - title: "Shut down cleanly"
   path: part1/01_robot_on_screen.qmd#setup-stop
   chapter: 1

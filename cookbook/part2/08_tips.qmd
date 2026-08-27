@@ -5,9 +5,18 @@ title: "Tip management"
 ## Setup {.unnumbered}
 
 ```{python}
+#| include: false
+import pathlib, sys
+_d = pathlib.Path.cwd()
+sys.path.insert(0, str(next(x for x in [_d, *_d.parents] if (x / "_fixture.py").exists())))
+from _fixture import sandbox
+sandbox("tips")
+```
+
+```{python}
 #| label: cell-setup
 #| output: false
-import logging, pathlib, tempfile
+import logging
 
 from pylabrobot.liquid_handling import LiquidHandler
 from pylabrobot.liquid_handling.backends import LiquidHandlerChatterboxBackend
@@ -33,7 +42,6 @@ plt_carrier[0] = plate = cor_96_wellplate_360uL_Fb(name="plate")
 
 set_tip_tracking(True)                                   # <2>
 
-scratch = pathlib.Path(tempfile.mkdtemp(prefix="cookbook_tips_"))
 logging.getLogger("pylabrobot.resources").setLevel(logging.WARNING)   # <3>
 ```
 
@@ -176,7 +184,7 @@ print("total spots:", len(spots))
 
 gen = F.linear_tip_spot_generator(                          # <2>
     spots,
-    cache_file_path=str(scratch / "tip_index.json"),
+    cache_file_path="tip_index.json",
 )
 
 batch = await gen.get(8)                                    # <3>
@@ -275,7 +283,7 @@ rack A, on top of tips it already used.
 #| label: cell-stream-resume
 resumed = F.linear_tip_spot_generator(                      # <1>
     spots,
-    cache_file_path=str(scratch / "tip_index.json"),
+    cache_file_path="tip_index.json",
 )
 print("index restored to:", len(spots) - resumed.get_num_tips_left())   # <2>
 
