@@ -2,7 +2,7 @@
 title: "Saving and loading"
 ---
 
-PLR serializes two different things, through two different pairs of calls.
+Saving the state of the deck to disk can be phenomenally useful for error recovery. PLR serializes two different things, through two different pairs of calls.
 
 **Layout** is the resource tree: which labware exists, what type it is, and where it sits.
 `save()` writes it, `load_from_json_file()` reads it.
