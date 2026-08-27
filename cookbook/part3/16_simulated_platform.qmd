@@ -555,15 +555,6 @@ print("FIFO:", fifo)
 print("longest wait:", round(max(s - a for a, s in order)), "s")
 ```
 
-This is not a bug in the loop, and no query will fix it. Plates are pushed in arrival order and
-popped from the top, which is **non-preemptive LCFS** — last-come-first-served. Its mean wait is
-identical to FIFO, because any work-conserving discipline that ignores service times leaves the same
-work in the system. What changes is the tail: most plates go straight in, and one plate sits at the
-bottom of the stacker while later arrivals are stacked on top of it and lifted back off.
-
-Worth stating precisely, because it is the part that generalizes: **LIFO comes from the pair (push
-order, pop end), not from the container.** Load the same stacker bottom-up in reverse and it serves
-FIFO. The hardware constrains the discipline; it does not determine it.
 
 ### Exercise: what would a true FIFO stacker be?
 
