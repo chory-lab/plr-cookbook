@@ -19,7 +19,7 @@ JupyterLab will open in your browser. Create a new Python notebook, paste the re
 
 ---
 
-## Get a liquid handler running with no hardware {#first-robot}
+## Simulating a liquid-handling robot with no hardware {#first-robot}
 
 ::: {.recipe}
 
