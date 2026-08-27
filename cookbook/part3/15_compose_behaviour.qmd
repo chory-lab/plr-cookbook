@@ -85,6 +85,7 @@ Two mechanics are worth stating before the patterns are written:
 
 ### Centralize try/except behaviour
 
+Try/ except decorators let you easily compose error-handling logic for specific exceptions, like sending a Slack notification to an operator if a tip pickup fails with a no tip detected exception.
 Suppose several liquid-handling steps should log failures consistently:
 
 ```{python}
