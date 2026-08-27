@@ -126,11 +126,8 @@ tip_carrier[0] = rack = opentrons_96_filtertiprack_200ul(
 )
 ```
 
-The two stackers are `ResourceStack`s, and PLR is explicit about what that means — from its own
-docstring:
+The two stackers here are `ResourceStack`s, which are just convenience objects for stacks of labware.
 
-> Stacks growing in the z direction are from bottom to top, and function as the
-> [stack data type](https://en.wikipedia.org/wiki/Stack_(abstract_data_type)).
 
 ```{python}
 #| label: cell-cell-stackers
