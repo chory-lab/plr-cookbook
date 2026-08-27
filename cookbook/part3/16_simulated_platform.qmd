@@ -148,7 +148,7 @@ buffer["A1"][0].set_volume(195_000)
 ```
 
 That is one rack of 96 filtered 200 µL tips and a single-well trough holding 195 mL. The run below
-uses 34 tips and 1.8 mL of buffer, and its thirstiest well takes 83.9 µL — inside one tip, so no well
+uses 34 tips and 1.8 mL of buffer, and its most concentrated well takes 83.9 µL — inside one tip, so no well
 needs a second trip to the trough and the refill wrapper from
 [chapter 15](15_compose_behaviour.qmd#recovery) is not needed here.
 
