@@ -266,6 +266,8 @@ run_dir, manifest, log = new_run(
 db = open_tables(run_dir / "run.sqlite")
 ```
 
+### Model the arrivals
+
 Arrivals are the upstream process, reduced to the only two things this cell needs from it: when a
 plate shows up, and what is in it. The sampling is a generator — suspended between arrivals, holding
 `t` and `n` as ordinary local variables, drawing a plate only when asked:
@@ -352,17 +354,14 @@ class StackerUpstream:
         self.seen = set()
 
     def due(self, now):
-        ready = []
+        scanned = self.reader.scan()
+        fresh = [p for p in scanned if p not in self.seen]
+        self.seen.update(fresh)
 
-        for plate_id in self.reader.scan():              # <1>
-            if plate_id not in self.seen:
-                self.seen.add(plate_id)
-                ready.append((
-                    now, plate_id,
-                    self.samples.concentrations(plate_id),
-                ))
-
-        return ready
+        return [
+            (now, p, self.samples.concentrations(p))     # <1>
+            for p in fresh
+        ]
 
     def closed(self, now):
         return now > self.until and not self.reader.scan()
@@ -372,7 +371,7 @@ class StackerUpstream:
    real cell ever has. In simulation the two are identical, which is one of the things simulation
    quietly makes easier than reality.
 
-### Load and process
+### Load an arrived plate
 
 Upstream sets each arrived plate on top of the input stacker. The robot is not involved, and the
 row is written at the moment the plate is real — the database records what happened, never what is
@@ -400,7 +399,10 @@ def load_plate(arrived, plate_id, concs):
    rather than indexing back into the plate. Only the occupied wells get a volume; the rest are
    empty, and the volume tracker will say so if the protocol reaches for one.
 
-`handle_errors` is the wrapper from [chapter 15](15_compose_behaviour.qmd#recovery):
+### Normalize a plate
+
+`handle_errors` is the wrapper from [chapter 15](15_compose_behaviour.qmd#recovery). It is retyped
+here rather than imported, so this chapter runs on its own:
 
 ```{python}
 #| label: cell-cell-wrapper
@@ -523,6 +525,8 @@ def close_run():
 
 1. The achieved concentration is what the dilution actually produced, seen through a quantification
    carrying the noise from the first recipe.
+
+### Run it
 
 One flag picks both the clock and the upstream, and nothing below it knows which it got:
 
