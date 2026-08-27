@@ -16,7 +16,7 @@ run directory of [chapter 13](13_record_runs.qmd), the SQLite tables of
 [chapter 15](15_compose_behaviour.qmd) into a single simulated unit operation: a normalization cell
 fed by a plate stacker.
 
-## Setup {.unnumbered}
+:::: {.callout-note collapse="true" title="Setup"}
 
 ```{python}
 #| include: false
@@ -43,6 +43,8 @@ from pylabrobot.resources import (
     set_volume_tracking, set_tip_tracking,
 )
 ```
+::::
+
 
 ---
 
@@ -88,6 +90,8 @@ def quantify(true_conc, cv=0.03):
         1 + rng.gauss(0, cv)
     )
 ```
+
+:::
 
 ---
 
@@ -335,7 +339,7 @@ def handle_errors(fn):
     return wrapper
 
 @handle_errors
-async def normalize(plate, concs, tips):
+async def normalize(plate, concs, tip_column):
     rows = [plan_well(c) for c in concs]                        # <1>
     need = [i for i, (vol, _) in enumerate(rows) if vol > 0]     # <2>
     vols = [rows[i][0] for i in need]
@@ -344,7 +348,7 @@ async def normalize(plate, concs, tips):
         return rows
 
     await lh.pick_up_tips(
-        [next(tips) for _ in need], use_channels=need
+        [tip_column[i] for i in need], use_channels=need
     )
     await lh.aspirate(
         [buffer["A1"][0]] * len(need),
@@ -365,7 +369,8 @@ async def normalize(plate, concs, tips):
    wells were filled upstream, and everything below is sized from it.
 2. `use_channels` must match the length of `vols`; a well that needs nothing is simply not a channel
    in this operation. Between a partial plate and the wells already at target, the channels in use
-   are a subset of a subset.
+   are a subset of a subset. The same indices select the tips: channel *i* takes spot *i* of the
+   plate's tip column.
 3. A plate whose wells are all at or below target needs no buffer at all. Picking up zero tips is
    not a no-op worth asking the robot to perform.
 
@@ -398,6 +403,57 @@ reservoir on its own.
 
 ### Run it
 
+Everything the run reads or writes is behind a name, so the loop itself is only the protocol:
+
+```{python}
+#| label: cell-cell-record
+#| output: false
+def next_arrival():
+    return db.execute(
+        "SELECT MIN(arrived) FROM plates WHERE finished IS NULL"
+    ).fetchone()[0]
+
+def worklist(plate):
+    (concs,) = db.execute(
+        "SELECT concs FROM plates WHERE plate=?", (plate.name,)
+    ).fetchone()
+    return json.loads(concs)
+
+def record_plate(plate, samples, rows, started, finished):
+    for i, ((vol, flag), conc) in enumerate(zip(rows, samples)):
+        db.execute(
+            "INSERT INTO wells VALUES (?,?,?,?,?,?)",
+            (
+                plate.name, i, conc, vol, flag,
+                quantify(conc * V_SAMPLE / (V_SAMPLE + vol)),    # <1>
+            ),
+        )
+
+    (arrived,) = db.execute(
+        "SELECT arrived FROM plates WHERE plate=?", (plate.name,)
+    ).fetchone()
+    db.execute(
+        "UPDATE plates SET started=?, finished=? WHERE plate=?",
+        (started, finished, plate.name),
+    )
+    db.commit()
+    log.info("%s waited %.0f s", plate.name, started - arrived)
+
+def close_run():
+    manifest["plates"] = [
+        plate_id for (plate_id,) in db.execute(
+            "SELECT plate FROM plates ORDER BY arrived"
+        )
+    ]
+    manifest["finished"] = datetime.now().isoformat()
+    (run_dir / "manifest.json").write_text(
+        json.dumps(manifest, indent=2)
+    )
+```
+
+1. The achieved concentration is what the dilution actually produced, seen through a quantification
+   carrying the noise from the first recipe.
+
 The loop has no scheduler in it. When the stacker is empty the clock jumps to the next arrival;
 otherwise the top plate is taken. **The hardware chooses which plate runs**, and the loop only
 records the consequence:
@@ -405,15 +461,13 @@ records the consequence:
 ```{python}
 #| label: cell-cell-run
 #| output: false
-tips = iter(rack.get_all_items())                                # <1>
+tip_columns = (rack.column(c) for c in range(rack.num_items_x))  # <1>
 
 while True:
     load_arrivals(clock.now())
 
     if len(inp.children) == 0:
-        nxt = db.execute(
-            "SELECT MIN(arrived) FROM plates WHERE finished IS NULL"
-        ).fetchone()[0]
+        nxt = next_arrival()
 
         if nxt is None:
             break
@@ -422,60 +476,27 @@ while True:
         continue
 
     plate = inp.get_top_item()                                   # <3>
-    arrived, concs = db.execute(
-        "SELECT arrived, concs FROM plates WHERE plate=?",
-        (plate.name,),
-    ).fetchone()
-
+    samples = worklist(plate)
     started = clock.now()
+
     await lh.move_plate(plate, carrier[1])
-
-    samples = json.loads(concs)
-    rows = await normalize(plate, samples, tips)                 # <4>
-
+    rows = await normalize(plate, samples, next(tip_columns))    # <4>
     await lh.move_plate(plate, out)
     await clock.wait(SERVICE)
 
-    for i, ((vol, flag), conc) in enumerate(zip(rows, samples)):
-        db.execute(
-            "INSERT INTO wells VALUES (?,?,?,?,?,?)",
-            (
-                plate.name, i, conc, vol, flag,
-                quantify(conc * V_SAMPLE / (V_SAMPLE + vol)),    # <5>
-            ),
-        )
+    record_plate(plate, samples, rows, started, clock.now())
 
-    db.execute(
-        "UPDATE plates SET started=?, finished=? WHERE plate=?",
-        (started, clock.now(), plate.name),
-    )
-    db.commit()
-    log.info(
-        "%s waited %.0f s", plate.name, started - arrived
-    )
-
-manifest["plates"] = [
-    row[0] for row in db.execute(
-        "SELECT plate FROM plates ORDER BY arrived"
-    )
-]
-manifest["finished"] = datetime.now().isoformat()
-(run_dir / "manifest.json").write_text(
-    json.dumps(manifest, indent=2)
-)
+close_run()
 ```
 
-1. One tip per channel that will actually pipette, drawn from a flat stream over the rack's 96
-   spots — `rack.get_all_items()` is the whole rack in fill order. The STAR's channels are
-   independently positionable, so nothing pins channel *i* to row *i*: each plate takes exactly as
-   many tips as it has wells that need buffer. When the rack is spent, `next()` raises
-   `StopIteration`, which is the true statement — this cell has run out of tips.
+1. One tip column per plate — eight spots, one per channel, out of the rack's twelve columns. A
+   plate off an extraction step carries at most eight samples, so a column covers any of them, and
+   the plate takes only the spots its `use_channels` names. When the rack is spent, `next()` raises
+   `StopIteration`, which is the true statement: this cell has run out of tips.
 2. No sleeping. Idle time is a jump.
 3. `get_top_item()` is the only plate the gripper can reach.
-4. `normalize` consumes the stream, so the tips a plate takes are the next `len(need)` spots and the
-   stream never skips one. The mapping from tip slot to channel is explicit in `use_channels=need`.
-5. The achieved concentration is what the dilution actually produced, seen through a quantification
-   with the noise from the first recipe.
+4. A plate's tips are its own column, so nothing is shared between plates and the mapping from spot
+   to channel is the same index in both.
 
 ```{python}
 #| label: cell-cell-results
