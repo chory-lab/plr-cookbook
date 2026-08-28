@@ -593,18 +593,8 @@ while True:
 
 close_run()
 ```
-
-1. One tip column per plate — eight spots, one per channel, out of the rack's twelve columns. A
-   plate off an extraction step carries at most eight samples, so a column covers any of them, and
-   the plate takes only the spots its `use_channels` names. When the rack is spent, `next()` raises
-   `StopIteration`, which is the true statement: this cell has run out of tips.
-2. The only question the loop asks about arrivals, and one a real cell can answer.
-3. Empty stacker and no more samples coming: everything that arrived has been processed.
-4. Idle only because the stacker is empty and nothing has arrived. Simulated, the poll costs nothing
-   and the clock jumps `POLL` seconds; real, it is a `POLL`-second sleep. The loop cannot tell.
-5. `get_top_item()` is the only plate the gripper can reach.
-6. A plate's tips are its own column, so nothing is shared between plates and the mapping from spot
-   to channel is the same index in both.
+#### Report the results
+Print summary statistics of the run from data collected in the database.
 
 ```{python}
 #| label: cell-cell-results
